@@ -1,0 +1,27 @@
+[Unit]
+Description=Streamlit R+S Auskunft (RSEV)
+After=network.target
+
+[Service]
+# --- Benutzer und Arbeitsverzeichnis ---
+# WICHTIG: WorkingDirectory muss auf das rolladen-Verzeichnis zeigen
+User=dren.fazlija
+Group=sudo
+WorkingDirectory=/home/dren.fazlija/rolladen
+
+# --- Python-Umgebung (bbs3) aktivieren ---
+# Läuft rsev.py auf Port 8502 mit der config.toml aus dem rolladen-Verzeichnis
+ExecStart=/home/dren.fazlija/miniconda3/envs/bbs3/bin/streamlit run /home/dren.fazlija/rolladen/rsev.py --server.address 127.0.0.1 --server.port 8502 --config.file /home/dren.fazlija/rolladen/.streamlit/config.toml
+
+# --- Neustart-Verhalten ---
+Restart=always
+
+# --- Logging ---
+StandardOutput=append:/var/log/streamlit-rsev.log
+StandardError=append:/var/log/streamlit-rsev.err
+
+# --- Umgebungspfad ---
+Environment="PATH=/home/dren.fazlija/miniconda3/envs/bbs3/bin:/usr/bin:/bin"
+
+[Install]
+WantedBy=multi-user.target

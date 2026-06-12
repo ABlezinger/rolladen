@@ -1,0 +1,53 @@
+# ==============================================================
+#   bbschatbot.de – Streamlit über Apache2 + HTTPS
+# ==============================================================
+
+# --------------------------------------------------------------
+# HTTP (Port 80) → Weiterleitung auf HTTPS
+# --------------------------------------------------------------
+<VirtualHost 10.10.150.58:80>
+    ServerName chatbots.daisec.de
+    ServerAlias chatbots.daisec.eu
+
+    ProxyPreserveHost On
+
+    # ============================================================
+    # RSEV App Routing (port 8502) - MUST come BEFORE catch-all
+    # ============================================================
+    
+    # WebSockets for /rsev/
+    <LocationMatch "^/rsev/_stcore(/.*)?$">
+        ProxyPass ws://10.10.150.58:8502/_stcore$1
+        ProxyPassReverse ws://10.10.150.58:8502/_stcore$1
+    </LocationMatch>
+
+    # HTTP traffic for /rsev/
+    <LocationMatch "^/rsev(/.*)?$">
+        ProxyPass http://10.10.150.58:8502$1
+        ProxyPassReverse http://10.10.150.58:8502$1
+    </LocationMatch>
+
+    # ============================================================
+    # Main App Routing (port 8501) - catch-all comes last
+    # ============================================================
+    
+    # WebSockets for main app
+    <Location "/_stcore/">
+        ProxyPass ws://10.10.150.58:8501/_stcore/
+        ProxyPassReverse ws://10.10.150.58:8501/_stcore/
+    </Location>
+
+    # All other HTTP traffic → Streamlit main app
+    <Location "/">
+        ProxyPass http://10.10.150.58:8501/
+        ProxyPassReverse http://10.10.150.58:8501/
+    </Location>
+
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set X-Frame-Options "SAMEORIGIN"
+
+    ErrorLog ${APACHE_LOG_DIR}/streamlit-error.log
+    CustomLog ${APACHE_LOG_DIR}/streamlit-access.log combined
+</VirtualHost>
