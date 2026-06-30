@@ -1,0 +1,11 @@
+__pychache__
+rsev
+rsev_v2*
+*.sqlite3
+
+
+.streamlit/secrets.toml
+
+.conda
+
+.vscode

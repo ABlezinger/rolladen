@@ -33,7 +33,7 @@ def verify_password(user_input):
 # Based on NIST 2025 recommendations, see https://proton.me/blog/nist-password-guidelines
 # For now: 8-64 characters, no further restrictions + blocklist of easy passwords
 def check_password_complexity(password):
-    with open('common_passwords.csv', 'r') as f:
+    with open('assets/common_passwords.csv', 'r') as f:
         reader = csv.reader(f)
         blocklist = [row[0] for row in reader]
     if len(password) < 8 or len(password) > 64:

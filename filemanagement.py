@@ -1,7 +1,9 @@
 import streamlit as st
 import os
+import json
+import mimetypes
 from pswd import verify_password
-from vector_store_management import (
+from rag.vector_store_management import (
     extend_existing_vector_store, 
     check_vector_store_status, 
     OpenAIEmbeddingsWrapper,
@@ -36,6 +38,10 @@ class DatabaseFileExplorer:
         self.skip_prefix = skip_prefix
         self.key_prefix = key_prefix
         self.items_per_page_options = items_per_page_options
+        if os.path.exists(persist_directory):
+            self.doc_validity = json.load(open(f"{self.persist_directory}/doc_validity.json"))  # To store validity info for documents
+        else:
+            self.doc_validity = {}
         
         # Build virtual file tree
         self.file_tree = self._build_virtual_tree()
@@ -129,7 +135,9 @@ class DatabaseFileExplorer:
                 'name': name,
                 'is_directory': is_directory,
                 'size': data.get("__size__", 0) if not is_directory else 0,
-                'full_path': data.get("__full_path__", "")
+                'full_path': data.get("__full_path__", ""),
+                'valid_from': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_from", "Unbekannt") if not is_directory else None,
+                'valid_to': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_to", "Unbekannt") if not is_directory else None,
             })
         
         # Sort: folders first, then files, alphabetically
@@ -139,7 +147,7 @@ class DatabaseFileExplorer:
     def _format_size(self, size: int) -> str:
         """Format file size in human-readable format."""
         if size == 0:
-            return "-"
+            return "--"
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size < 1024:
                 return f"{size:.1f} {unit}"
@@ -212,6 +220,19 @@ class DatabaseFileExplorer:
                 if st.button("⏭️", disabled=current_page == total_pages, key=f"{self.key_prefix}last"):
                     st.session_state[self._get_state_key('current_page')] = total_pages
                     st.rerun()
+    def file_icon(self, name: str):
+        n = name.lower()
+        if n.endswith(".pdf"):
+            return "📕"
+        if n.endswith((".docx", ".doc")):
+            return "📘"
+        if n.endswith((".xlsx", ".xls")):
+            return "📗"
+        return "📄"
+
+
+    def fmt(self, val):
+        return str(val).replace("unknown", "--")
     
     def render(self):
         """Render the file explorer component."""
@@ -280,42 +301,201 @@ class DatabaseFileExplorer:
             if not paginated_items:
                 st.info("Dieser Ordner ist leer.")
             else:
-                for idx, item in enumerate(paginated_items):
-                    col1, col2, col3 = st.columns([4, 1, 1])
+                # ---------- header ----------
+                st.markdown(
+                    """
+                    <style>
+                    .file-row {
+                        display: flex;
+                        align-items: center;
+                        padding: 6px 8px;
+                        border-bottom: 1px solid #eee;
+                        font-size: 14px;
+                    }
+                    .file-col-name { flex: 7; }
+                    .file-col-size { flex: 2; }
+                    .file-col-from { flex: 2; }
+                    .file-col-to { flex: 2; }
+                    .file-col-actions { flex: 3; display: flex; gap: 6px; }
                     
+                    [data-testid="column"] {
+                        padding: 0rem 0.3rem;
+                    }
+
+                    div.stButton > button {
+                        padding: 2px 6px;
+                        font-size: 12px;
+                        height: 28px;
+                        min-height: 28px;
+                        line-height: 1;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+                header = st.columns([7, 2, 2, 2, 3])
+                header[0].markdown("**Dateiname**")
+                header[1].markdown("**Größe**")
+                header[2].markdown("**Gültig von**")
+                header[3].markdown("**Gültig bis**")
+                header[4].markdown("**Aktionen**")
+
+                st.divider()
+                # col1, col2, col3, col4, col5, col6 = st.columns([7, 2, 2, 2, 1, 1])
+                # with col1:
+                #     st.caption("Dateiname")
+                # with col2:
+                #     st.caption("Größe")
+                # with col3:
+                #     st.caption("Gültig von")
+                # with col4:
+                #     st.caption("Gütlig bis")
+                # with col5:
+                #     st.caption("Löschen")
+                # with col6:
+                #     st.caption("Herunterladen")
+                # for idx, item in enumerate(paginated_items):
+                    
+                #     # col1, col2, col3, col4, col5, col6 = st.columns([7, 2, 2, 2, 1, 1])
+                #     with col1:
+                #         if item['is_directory']:
+                #             if st.button(
+                #                 f"📁 {item['name']}", 
+                #                 key=f"{self.key_prefix}dir_{idx}_{item['name']}"):
+                #                 st.session_state[self._get_state_key('current_path_parts')].append(item['name'])
+                #                 st.session_state[self._get_state_key('current_page')] = 1
+                #                 st.rerun()
+                #         else:
+                #             # File icon based on extension
+                #             file_icon = "📄"
+                #             if item['name'].lower().endswith('.pdf'):
+                #                 file_icon = "📕"
+                #             elif item['name'].lower().endswith(('.docx', '.doc')):
+                #                 file_icon = "📘"
+                #             elif item['name'].lower().endswith(('.xlsx', '.xls')):
+                #                 file_icon = "📗"
+                #             st.text(f"{file_icon} {item['name']}")
+                    
+                #     with col2:
+                #         if not item['is_directory']:
+                #             st.text(self._format_size(item['size']))
+                            
+                #     with col3:
+                #         if not item['is_directory']:
+                #             # Edit button for files only (functionality can be implemented as needed)
+                #             text = f"{item['valid_from']}".replace("unknown", "--")
+                #             st.caption(body=text)
+                    
+                #     with col4:
+                #         if not item['is_directory']:
+                #             text = f"{item['valid_to']}".replace("unknown", "--")
+                #             st.caption(body=text)
+                #     with col5:
+                #         if not item['is_directory'] and item['full_path']:
+                #             # Delete button for files only
+                #             if st.button('🗑️', key=f"{self.key_prefix}del_{idx}_{item['name']}", help="Datei löschen"):
+                #                 # Confirmation in a separate dialog using session state
+                #                 st.session_state[self._get_state_key('delete_confirm_file')] = item['full_path']
+                #                 st.session_state[self._get_state_key('delete_confirm_name')] = item['name']
+                #                 st.rerun()
+                                
+                #     with col6:
+                #         if not item['is_directory']:
+                #             print(item)
+                #             source_path = item['full_path']
+                #             if source_path and os.path.isfile(source_path):
+                #                 try:
+                #                     with open(source_path, "rb") as file_handle:
+                #                         file_bytes = file_handle.read()
+
+                #                     mime_type = mimetypes.guess_type(source_path)[0] or "application/octet-stream"
+                #                     st.download_button(
+                #                         label="⬇️",
+                #                         data=file_bytes,
+                #                         file_name=os.path.basename(source_path),
+                #                         help="Datei herunterladen",
+                #                         mime=mime_type,
+                #                         key=f"download_{item.get('name', idx)}",
+                #                     )
+                #                 except Exception as e:
+                #                     st.download_button(
+                #                         label="⬇️", 
+                #                         help=f"Download nicht verfügbar: {str(e)}",
+                #                         data="", 
+                #                         key=f"download_error_{idx}_{item['name']}",
+                #                         disabled=True)
+                                    
+                #     st.divider()
+                
+                for idx, item in enumerate(paginated_items):
+
+                    is_dir = item["is_directory"]
+                    name = item["name"]
+                    icon = "📁" if is_dir else self.file_icon(name)
+
+                    col1, col2, col3, col4, col5 = st.columns([7, 2, 2, 2, 3])
+
+                    # ---------- NAME / NAVIGATION ----------
                     with col1:
-                        if item['is_directory']:
-                            if st.button(
-                                f"📁 {item['name']}", 
-                                key=f"{self.key_prefix}dir_{idx}_{item['name']}"
-                            ):
-                                st.session_state[self._get_state_key('current_path_parts')].append(item['name'])
-                                st.session_state[self._get_state_key('current_page')] = 1
+                        if is_dir:
+                            if st.button(f"{icon} {name}", key=f"open_{idx}"):
+                                st.session_state[self._get_state_key("current_path_parts")].append(name)
+                                st.session_state[self._get_state_key("current_page")] = 1
                                 st.rerun()
                         else:
-                            # File icon based on extension
-                            file_icon = "📄"
-                            if item['name'].lower().endswith('.pdf'):
-                                file_icon = "📕"
-                            elif item['name'].lower().endswith(('.docx', '.doc')):
-                                file_icon = "📘"
-                            elif item['name'].lower().endswith(('.xlsx', '.xls')):
-                                file_icon = "📗"
-                            st.text(f"{file_icon} {item['name']}")
-                    
+                            st.write(f"{icon} {name}")
+
+                    # ---------- SIZE ----------
                     with col2:
-                        if not item['is_directory']:
-                            st.text(self._format_size(item['size']))
-                    
+                        if not is_dir:
+                            st.write(self._format_size(item["size"]))
+
+                    # ---------- VALID FROM ----------
                     with col3:
-                        if not item['is_directory'] and item['full_path']:
-                            # Delete button for files only
-                            if st.button('🗑️', key=f"{self.key_prefix}del_{idx}_{item['name']}", help="Datei löschen"):
-                                # Confirmation in a separate dialog using session state
-                                st.session_state[self._get_state_key('delete_confirm_file')] = item['full_path']
-                                st.session_state[self._get_state_key('delete_confirm_name')] = item['name']
+                        if not is_dir:
+                            st.write(self.fmt(item.get("valid_from", "--")))
+
+                    # ---------- VALID TO ----------
+                    with col4:
+                        if not is_dir:
+                            st.write(self.fmt(item.get("valid_to", "--")))
+
+                    # ---------- ACTIONS ----------
+                    with col5:
+                        if not is_dir:
+                            st.markdown(
+                                "<div style='display:flex; gap:4px; align-items:center;'>",
+                                unsafe_allow_html=True
+                            )
+
+                            # DELETE
+                            if st.button("🗑️", key=f"del_{idx}", help="Löschen"):
+                                st.session_state[self._get_state_key("delete_confirm_file")] = item["full_path"]
+                                st.session_state[self._get_state_key("delete_confirm_name")] = name
                                 st.rerun()
-            
+
+                            # DOWNLOAD
+                            path = item.get("full_path")
+                            if path and os.path.isfile(path):
+                                try:
+                                    with open(path, "rb") as f:
+                                        data = f.read()
+
+                                    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+
+                                    st.download_button(
+                                        "⬇️",
+                                        data=data,
+                                        file_name=os.path.basename(path),
+                                        mime=mime,
+                                        key=f"dl_{idx}"
+                                    )
+
+                                except Exception:
+                                    st.caption("❌")
+                        st.markdown("</div>", unsafe_allow_html=True)
+
             # Handle deletion confirmation
             if self._get_state_key('delete_confirm_file') in st.session_state:
                 file_to_delete = st.session_state[self._get_state_key('delete_confirm_file')]
@@ -375,6 +555,21 @@ class DatabaseFileExplorer:
             # Show item count and pagination
             st.caption(f"Gesamt: {len(items)} Element(e)")
             self._render_pagination(len(items))
+            
+# add near top of file
+@st.fragment
+def _render_db_explorer_fragment(file_paths, client, persist_directory, embedding_model, skip_prefix, key_prefix):
+    with st.expander(f"📂 Datei-Explorer ({len(file_paths)} Dateien)", expanded=False):
+        st.caption("💡 Die Ansicht zeigt Ordner ab 'drive_download_combined' + den 'uploads' Ordner")
+        explorer = DatabaseFileExplorer(
+            file_paths=file_paths,
+            client=client,
+            persist_directory=persist_directory,
+            embedding_model=embedding_model,
+            skip_prefix=skip_prefix,
+            key_prefix=key_prefix
+        )
+        explorer.render()
 
 
 def run_file_management(client, persist_directory="kisski_db_v3", embedding_model="qwen3-embedding-4b", skip_prefix="drive_download_combined"):
@@ -518,19 +713,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
     
     # Display file explorer
     if file_count > 0:
-        with st.expander(f"📂 Datei-Explorer ({file_count} Dateien)", expanded=False):
-            st.caption("💡 Die Ansicht zeigt Ordner ab 'drive_download_combined' + den 'uploads' Ordner")
-            
-            # Create and render the database file explorer
-            explorer = DatabaseFileExplorer(
-                file_paths=st.session_state.db_file_list,
-                client=client,
-                persist_directory=persist_directory,
-                embedding_model=embedding_model,
-                skip_prefix=skip_prefix,
-                key_prefix="db_explorer_"
-            )
-            explorer.render()
+            _render_db_explorer_fragment(st.session_state.db_file_list, client, persist_directory, embedding_model, skip_prefix, "db_explorer_")
     else:
         st.info("ℹ️ Die Datenbank ist leer. Laden Sie Dateien hoch und fügen Sie sie zum Vektorstore hinzu.")
     
@@ -552,10 +735,27 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         # Show file preview
         st.info(f"📋 {len(uploaded_files)} Datei(en) ausgewählt:")
         
-        with st.expander("📁 Ausgewählte Dateien anzeigen", expanded=False):
+        with st.expander("📁 Ausgewählte Dateien anzeigen", expanded=True):
             for uploaded_file in uploaded_files:
                 file_size = uploaded_file.size
                 st.markdown(f"📄 **{uploaded_file.name}** ({file_size:,} Bytes)")
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    valid_from = st.date_input(
+                        f"Gültig von (optional)",
+                        value=None,
+                        key=f"valid_from_{uploaded_file.name}",
+                        format="DD.MM.YYYY")
+                with col2:
+                    valid_to = st.date_input(
+                        f"Gültig bis (optional)",
+                        value=None,
+                        key=f"valid_to_{uploaded_file.name}",
+                        format="DD.MM.YYYY")
+                
+                # Validation
+                if valid_from and valid_to and valid_from > valid_to:
+                    st.error("'Gültig ab' darf nicht nach 'Gültig bis' liegen.")
         
         st.divider()
         

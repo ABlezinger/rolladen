@@ -23,7 +23,7 @@ import os
 import sys
 import argparse
 from pathlib import Path
-from vector_store_management import (
+from rag.vector_store_management import (
     create_fresh_unified_vector_store, 
     load_unified_vector_store,
     extend_existing_vector_store,
@@ -60,8 +60,8 @@ Examples:
     fresh_parser.add_argument(
         '--output-dir',
         type=str,
-        default="bbs3",
-        help='Directory to save the vector store (default: bbs3)'
+        default="rsev_v2",
+        help='Directory to save the vector store (default: rsev_v2)'
     )
     fresh_parser.add_argument(
         '--model',
@@ -84,8 +84,8 @@ Examples:
     extend_parser.add_argument(
         '--vector-store',
         type=str,
-        default="bbs3",
-        help='Path to existing vector store directory (default: bbs3)'
+        default="rsev_v2",
+        help='Path to existing vector store directory (default: rsev_v2)'
     )
     extend_parser.add_argument(
         '--model',
@@ -113,8 +113,8 @@ Examples:
     update_parser.add_argument(
         '--vector-store',
         type=str,
-        default="bbs3",
-        help='Path to existing vector store directory (default: bbs3)'
+        default="rsev_v2",
+        help='Path to existing vector store directory (default: rsev_v2)'
     )
     update_parser.add_argument(
         '--model',

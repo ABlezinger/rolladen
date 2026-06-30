@@ -1,0 +1,28 @@
+#[server]
+# Streamlit soll nicht auf localhost beschränkt sein
+#headless = true
+#address = "127.0.0.1"
+
+# Port, auf dem Streamlit intern läuft
+#port = 8502
+
+# Apache kümmert sich um HTTPS, Streamlit selbst bleibt auf HTTP
+#enableCORS = false
+#enableXsrfProtection = false
+
+# Optional: Basis-URL, falls du z. B. /app nutzt
+#baseUrlPath = "rsev"
+
+[theme]
+base = "light"
+
+# CI-Rot aus dem Verbandslogo (Buttons/Links/Highlights)
+primaryColor = "#E20A17"
+
+# Neutral-dunkel für gute Lesbarkeit (statt „fast schwarz“ etwas weicher)
+textColor = "#2F2F2F"
+
+# Viel Weiß wie auf der Website
+backgroundColor = "#FFFFFF"
+
+# Dezentes, neutrales Hellgrau für Panels/Cards (typischer Website-Look)

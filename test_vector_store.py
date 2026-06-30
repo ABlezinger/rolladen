@@ -6,7 +6,7 @@ Run this to check if your vector store can be loaded and searched.
 
 import os
 import sys
-from vector_store_management import load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
+from rag.vector_store_management import load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
 from openai import OpenAI
 import streamlit as st
 

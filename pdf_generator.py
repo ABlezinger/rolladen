@@ -176,9 +176,9 @@ def run_pdf_generator(aufgaben_content, client):
         pdf.add_page()
 
         # Register custom fonts
-        pdf.add_font('ArialUnicode', '', 'Arial-Unicode-MS.ttf', uni=True)
-        pdf.add_font('ArialUnicode', 'B', 'Arial-Unicode-MS.ttf', uni=True)
-        pdf.add_font('ArialUnicode', 'I', 'Arial-Unicode-MS.ttf', uni=True)
+        pdf.add_font('ArialUnicode', '', 'assets/Arial-Unicode-MS.ttf', uni=True)
+        pdf.add_font('ArialUnicode', 'B', 'assets/Arial-Unicode-MS.ttf', uni=True)
+        pdf.add_font('ArialUnicode', 'I', 'assets/Arial-Unicode-MS.ttf', uni=True)
 
         # Layout and margins
         pdf.set_margins(25, 15, 25)  # Links, Oben, Rechts

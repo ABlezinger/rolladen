@@ -2,7 +2,7 @@ import streamlit as st
 from openai import OpenAI
 import re
 from system_prompts import system_prompt
-from llama_guard import check_safety_llama_guard_3
+from rag.llama_guard import check_safety_llama_guard_3
 from pdf_generator import run_pdf_generator
 from pdf_generator import run_pdf_download
 

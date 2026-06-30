@@ -6,9 +6,9 @@ from system_prompts import system_prompt
 from bbs_chatbot import run_chatbot
 from filemanagement import run_file_management
 
-st.set_page_config(page_title="R+S Auskunft", page_icon="images/rsev_favicon.ico")
+st.set_page_config(page_title="R+S Auskunft", page_icon="assets/images/rsev_favicon.ico")
 st.title("R+S Auskunft – ein DAISEC-Projekt")
-st.logo("images/rsev_x_daisec.png")
+st.logo("assets/images/rsev_x_daisec.png")
 
 st.html("""
   <style>
@@ -49,7 +49,7 @@ persist_directory = st.secrets["persist_directory"]
 # Initialize vector stores if they aren't already in session state
 if "vector_stores" not in st.session_state:
     try:
-        from vector_store_management import load_unified_vector_store, OpenAIEmbeddingsWrapper
+        from rag.vector_store_management import load_unified_vector_store, OpenAIEmbeddingsWrapper
         from langchain_community.vectorstores import Chroma
         
 
