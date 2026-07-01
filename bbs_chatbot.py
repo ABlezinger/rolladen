@@ -83,14 +83,15 @@ def new_query_needed(relevant_date, docs) -> bool:
         bool: True if one document is not valid for the relevant timestamp, False otherwise
     """
     for doc in docs:
-        valid_from = doc.metadata.get("valid_from", "unknown")
-        valid_to = doc.metadata.get("valid_to", "unknown")
-        
-        # date = datetime.strptime(rel_date, "%Y-%m-%d").date()
-        valid_from = datetime.strptime(valid_from, "%d.%m.%Y").date() if valid_from != "unknown" else datetime.strptime("1800-01-01", "%Y-%m-%d").date()
-        valid_to = datetime.strptime(valid_to, "%d.%m.%Y").date() if valid_to != "unknown" else datetime.strptime("9999-12-31", "%Y-%m-%d").date()  # Far future date if unknown
+        valid_from = doc.metadata["valid_from"]
+        valid_to = doc.metadata["valid_to"]
+        int_date = int(relevant_date.strftime("%Y%m%d"))
 
-        if valid_from <= relevant_date <= valid_to:
+        # date = datetime.strptime(rel_date, "%Y-%m-%d").date()
+        # valid_from = datetime.strptime(valid_from, "%d.%m.%Y").date() if valid_from != "unknown" else datetime.strptime("1800-01-01", "%Y-%m-%d").date()
+        # valid_to = datetime.strptime(valid_to, "%d.%m.%Y").date() if valid_to != "unknown" else datetime.strptime("9999-12-31", "%Y-%m-%d").date()  # Far future date if unknown
+        print(f"Debug: Checking document '{doc.metadata.get('doc_id', 'Unknown')}' with valid_from={valid_from}, valid_to={valid_to} against relevant_date={int_date}")
+        if valid_from <= int_date <= valid_to:
             pass
         else:
             return True
@@ -152,7 +153,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
         # Safety-Check
     if st.session_state["rag_step"] == steps["wait_for_safety_check"]:
         with st.status("🔒 Führe Sicherheitsüberprüfung durch...", expanded=True) as status: 
-            is_safe, explanation = check_safety_llama_guard_3(prompt)
+            is_safe, explanation = check_safety_llama_guard_3(st.session_state["active_prompt"])
             if not is_safe:
                 status.update(label="⚠️ Sicherheitswarnung", state="error")
                 st.error(explanation)
@@ -172,10 +173,11 @@ def run_chatbot(vector_store, client, with_thinking=True):
     if st.session_state["rag_step"] == steps["safety_checked"]:
         # ===== Retrieve relevant context =====
         with st.status("🔍 Suche relevante Informationen...", expanded=True) as status:
-            print("hAH")
             try:
-                retrieved_docs = vector_store.similarity_search(prompt, k=5)
-                print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{prompt}'")
+                print("EINS")
+                print("promt:", st.session_state["active_prompt"])
+                retrieved_docs = vector_store.similarity_search(st.session_state["active_prompt"], k=5)
+                print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state["active_prompt"]}'")
                 
                 if retrieved_docs:
                     for i, doc in enumerate(retrieved_docs):
@@ -207,7 +209,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
         # if no document is time relevant skip to answering
         st.session_state["rag_step"] = steps["answering"] 
         for doc in st.session_state.retrieved_docs:
-            if doc.metadata["valid_from"] != "unknown" or doc.metadata["valid_to"] != "unknown":
+            if doc.metadata["valid_from"] != 15000101 or doc.metadata["valid_to"] != 99991231:
                 st.session_state["rag_step"] = steps["awaiting_date"]
                 break
             
@@ -215,25 +217,28 @@ def run_chatbot(vector_store, client, with_thinking=True):
         with st.status("Für einige der gefundenen Quellen sind Gültigkeitszeiträume hinterlegt. Welcher Zeitraum ist für deine Frage relevant?", expanded=True) as status:                
             with st.form("timestamp_form"):
                 timestamp = st.date_input(
-                    "Welcher Zeitraum ist für deine Frage relevant?"
+                    "Welcher Zeitpunkt ist für deine Frage relevant?"
                 )   
+                
 
-                submitted = st.form_submit_button("Weiter", on_click=lambda: st.session_state.update({
-                    "relevant_date": timestamp, 
-                    "awaiting_date": False, 
-                    "rag_step": steps["date_received"]
-                }))
-
-            if not submitted:
+                submitted = st.form_submit_button("Weiter")
+            if submitted:
+                st.session_state["relevant_date"] = timestamp
+                st.session_state["awaiting_date"] = False
+                st.session_state["rag_step"] = steps["date_received"]
+                st.rerun()
+            else:
+                print("DATE: ", st.session_state.get("relevant_date", "No date set"))
                 st.stop()
             
-            st.session_state.relevant_date = timestamp
+            # st.session_state.relevant_date = timestamp
             st.session_state["rag_step"] = steps["date_received"]
 
             status.update(state="complete")
             st.rerun()
 
             # Continue only after submit
+    print("DATE: ", st.session_state.get("relevant_date", "No date set"))
     if st.session_state["rag_step"] >= steps["date_received"]:
         st.session_state["rag_step"] = steps["answering"]
         if "relevant_date" not in st.session_state:
@@ -243,10 +248,15 @@ def run_chatbot(vector_store, client, with_thinking=True):
                         
             with st.status(f"Überprüfe, ob die gefundenen Quellen für den Zeitpunkt {st.session_state['relevant_date']} relevant sind...", expanded=True) as status:
                 if new_query_needed(st.session_state["relevant_date"], st.session_state.retrieved_docs):
-                    prompt = f"Bitte berücksichtige nur Informationen, die für den Zeitpunkt {st.session_state['relevant_date']} relevant sind. {st.session_state['active_prompt']}"            
+                    status.update(label=f"⚠️ Einige Quellen sind für den Zeitpunkt {st.session_state['relevant_date']} nicht relevant. Eine neue Suche wird durchgeführt...", state="error", expanded=True)
+                    int_date = int(st.session_state["relevant_date"].strftime("%Y%m%d"))
+                    # prompt = f"Bitte berücksichtige nur Informationen, die für den Zeitpunkt {st.session_state['relevant_date']} relevant sind. {st.session_state['active_prompt']}"            
                     try:
-                        retrieved_docs = vector_store.similarity_search(prompt, k=5)
-                        print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{prompt}'")
+                        retrieved_docs = vector_store.similarity_search(
+                            st.session_state["active_prompt"], 
+                            k=5,
+                            filter={"$and": [{"valid_from": {"$lte": int_date}}, {"valid_to": {"$gte": int_date}}]})
+                        print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state['active_prompt']}' with date filter: {int_date}")
                         
                         if retrieved_docs:
                             for i, doc in enumerate(retrieved_docs):
@@ -255,7 +265,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
                         else:
                             print("Debug: No documents retrieved!")
                             
-                        status.update(label=f"✅ Relevante Informationen gefunden", state="complete", expanded=False)
+                        status.update(label=f"✅ Neue zetilich passende Informationen gefunden", state="complete", expanded=False)
                     except Exception as e:
                         print(f"Debug: Error in similarity search: {str(e)}")
                         retrieved_docs = []

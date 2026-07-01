@@ -14,6 +14,7 @@ from pathlib import Path
 from langchain_community.vectorstores import Chroma
 import math
 from typing import List, Dict, Any
+import datetime
 
 
 class DatabaseFileExplorer:
@@ -454,12 +455,16 @@ class DatabaseFileExplorer:
                     # ---------- VALID FROM ----------
                     with col3:
                         if not is_dir:
-                            st.write(self.fmt(item.get("valid_from", "--")))
+                            valid_from = item.get("valid_from", 15000101)  # Default to a very old date if not set
+                            date_string = f"{datetime.datetime.strptime(str(valid_from), '%Y%m%d').strftime('%d.%m.%Y')}" if valid_from != 15000101 else "--"
+                            st.write(date_string)
 
                     # ---------- VALID TO ----------
                     with col4:
                         if not is_dir:
-                            st.write(self.fmt(item.get("valid_to", "--")))
+                            valid_to = item.get("valid_to", 99991231)  # Default to a far future date if not set
+                            to_date_string = f"{datetime.datetime.strptime(str(valid_to), '%Y%m%d').strftime('%d.%m.%Y')}" if valid_to != 99991231 else "--"
+                            st.write(to_date_string)
 
                     # ---------- ACTIONS ----------
                     with col5:
@@ -746,12 +751,14 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         value=None,
                         key=f"valid_from_{uploaded_file.name}",
                         format="DD.MM.YYYY")
+                    valid_from_int = int(valid_from.strftime("%Y%m%d")) if valid_from else 0
                 with col2:
                     valid_to = st.date_input(
                         f"Gültig bis (optional)",
                         value=None,
                         key=f"valid_to_{uploaded_file.name}",
                         format="DD.MM.YYYY")
+                    valid_to_int = int(valid_to.strftime("%Y%m%d")) if valid_to else 99991231
                 
                 # Validation
                 if valid_from and valid_to and valid_from > valid_to:

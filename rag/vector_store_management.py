@@ -32,6 +32,8 @@ class OpenAIEmbeddingsWrapper:
         """
         Accepts a list of texts and returns a list of embedding vectors.
         """
+        
+        print(f"Embedding {len(texts)} documents using model '{self.model}'...")
         response = self.client.embeddings.create(model=self.model, input=texts)
         return [item.embedding for item in response.data]
 
@@ -39,7 +41,11 @@ class OpenAIEmbeddingsWrapper:
         """
         Accepts a single text string and returns its embedding vector.
         """
+        # print(f"Embedding query using model '{self.model}'...")
         response = self.client.embeddings.create(model=self.model, input=[text])
+        # print("RESPONSE")
+        
+        # print(response)
         return response.data[0].embedding
 
 # A helper function that loads a document from file_path based on its extension.
@@ -93,8 +99,8 @@ def load_document(file_path, doc_validity):
                     "folder": safe_folder_name,
                     "doc_id": f"{safe_folder_name}_{safe_basename}_{i}",
                     "page_number": doc.metadata.get("page", i + 1), # Store PDF page number
-                    "valid_from": doc_validity.get(safe_file_path, {}).get("valid_from", "unknown"),
-                    "valid_to": doc_validity.get(safe_file_path, {}).get("valid_to", "unknown")
+                    "valid_from": doc_validity.get(safe_file_path, {}).get("valid_from", 15000101),
+                    "valid_to": doc_validity.get(safe_file_path, {}).get("valid_to", 99991231)
                 })
             except Exception as e:
                 # Fall back to simple metadata if encoding fails
@@ -103,8 +109,8 @@ def load_document(file_path, doc_validity):
                     "folder": "unknown_folder",
                     "doc_id": f"doc_{i}",
                     "page_number": doc.metadata.get("page", i + 1),
-                    "valid_from": doc_validity.get(safe_file_path, {}).get("valid_from", "unknown"),
-                    "valid_to": doc_validity.get(safe_file_path, {}).get("valid_to", "unknown")
+                    "valid_from": doc_validity.get(safe_file_path, {}).get("valid_from", 15000101),
+                    "valid_to": doc_validity.get(safe_file_path, {}).get("valid_to", 99991231)
                 })
                 print(f"Warning: Could not properly set metadata for document: {str(e)}")
             
@@ -629,9 +635,9 @@ def create_unified_vector_store(original_data_folder: str, original_persist_dire
     print(f"Split documents into {len(split_docs)} chunks")
     
     # add validity information to text
-    for doc in split_docs:
-        valid_string = f"Gültig von: {doc.metadata['valid_from']}, Gültig bis: {doc.metadata['valid_to']}".replace("unknown", "unbekannt")
-        doc.page_content += f"\n\n{valid_string}"
+    # for doc in split_docs:
+    #     valid_string = f"Gültig von: {doc.metadata['valid_from']}, Gültig bis: {doc.metadata['valid_to']}".replace("unknown", "unbekannt")
+    #     doc.page_content += f"\n\n{valid_string}"
 
     print(split_docs[:2])
     print(f"Split documents into {len(split_docs)} chunks")
