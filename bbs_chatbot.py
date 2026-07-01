@@ -87,10 +87,6 @@ def new_query_needed(relevant_date, docs) -> bool:
         valid_to = doc.metadata["valid_to"]
         int_date = int(relevant_date.strftime("%Y%m%d"))
 
-        # date = datetime.strptime(rel_date, "%Y-%m-%d").date()
-        # valid_from = datetime.strptime(valid_from, "%d.%m.%Y").date() if valid_from != "unknown" else datetime.strptime("1800-01-01", "%Y-%m-%d").date()
-        # valid_to = datetime.strptime(valid_to, "%d.%m.%Y").date() if valid_to != "unknown" else datetime.strptime("9999-12-31", "%Y-%m-%d").date()  # Far future date if unknown
-        print(f"Debug: Checking document '{doc.metadata.get('doc_id', 'Unknown')}' with valid_from={valid_from}, valid_to={valid_to} against relevant_date={int_date}")
         if valid_from <= int_date <= valid_to:
             pass
         else:
@@ -136,7 +132,8 @@ def run_chatbot(vector_store, client, with_thinking=True):
             if metadata.get("thinking_text"):
                 with st.expander("Gedankengang anzeigen"):
                     st.markdown(metadata["thinking_text"])
-
+            print("OLDDOCS")
+            print(retrieved_docs)
             if retrieved_docs:
                 _render_retrieved_docs_fragment(retrieved_docs, key_prefix=f"history_{message_index}_")
 
@@ -238,19 +235,16 @@ def run_chatbot(vector_store, client, with_thinking=True):
             st.rerun()
 
             # Continue only after submit
-    print("DATE: ", st.session_state.get("relevant_date", "No date set"))
     if st.session_state["rag_step"] >= steps["date_received"]:
         st.session_state["rag_step"] = steps["answering"]
         if "relevant_date" not in st.session_state:
             st.status("✅ Keine zeitlich relevanten Quellen gefunden", state="complete")
-        else:
-            # st.status("✅ Zeitlich relevante Quellen gefunden", state="complete")
-                        
+        else:                        
             with st.status(f"Überprüfe, ob die gefundenen Quellen für den Zeitpunkt {st.session_state['relevant_date']} relevant sind...", expanded=True) as status:
                 if new_query_needed(st.session_state["relevant_date"], st.session_state.retrieved_docs):
                     status.update(label=f"⚠️ Einige Quellen sind für den Zeitpunkt {st.session_state['relevant_date']} nicht relevant. Eine neue Suche wird durchgeführt...", state="error", expanded=True)
                     int_date = int(st.session_state["relevant_date"].strftime("%Y%m%d"))
-                    # prompt = f"Bitte berücksichtige nur Informationen, die für den Zeitpunkt {st.session_state['relevant_date']} relevant sind. {st.session_state['active_prompt']}"            
+
                     try:
                         retrieved_docs = vector_store.similarity_search(
                             st.session_state["active_prompt"], 
@@ -287,10 +281,13 @@ def run_chatbot(vector_store, client, with_thinking=True):
                     "\n=== Ende Kontext ===\n"
                 )
 
+                
+                
                 # Build the messages list using the augmented prompt.
                 messages = [{"role": "system", "content": system_prompt_with_context}] + st.session_state.messages
                 # =============================================================
-
+                print("FINAL PROMPT")
+                print(messages)
                 # Call the API.
                 completion = client.chat.completions.create(
                     model=st.session_state["openai_model"],
@@ -439,8 +436,8 @@ def run_chatbot(vector_store, client, with_thinking=True):
             message_metadata = {}
             if thinking_text:
                 message_metadata["thinking_text"] = thinking_text
-            if retrieved_docs:
-                message_metadata["retrieved_docs"] = _serialize_retrieved_docs(retrieved_docs)
+            if len(st.session_state["retrieved_docs"]) > 0:
+                message_metadata["retrieved_docs"] = _serialize_retrieved_docs(st.session_state["retrieved_docs"])
             
             st.session_state.messages.append({
                 "role": "assistant", 
@@ -452,15 +449,13 @@ def run_chatbot(vector_store, client, with_thinking=True):
                 assistant_response = re.sub(r"<think>.*?</think>", "", assistant_response, flags=re.DOTALL)
                 thinking_expander.markdown(thinking_text)
 
-            if retrieved_docs:
-                _render_retrieved_docs_fragment(_serialize_retrieved_docs(retrieved_docs), key_prefix="live_")
 
             # Store message with metadata for expanders
             message_metadata = {}
             if thinking_text:
                 message_metadata["thinking_text"] = thinking_text
-            if retrieved_docs:
-                message_metadata["retrieved_docs"] = _serialize_retrieved_docs(retrieved_docs)
+            if len(st.session_state["retrieved_docs"]) > 0:
+                message_metadata["retrieved_docs"] = _serialize_retrieved_docs(st.session_state["retrieved_docs"])
             
             st.session_state.messages.append({
                 "role": "assistant", 
@@ -471,4 +466,8 @@ def run_chatbot(vector_store, client, with_thinking=True):
             st.session_state.update({"rag_step": steps["wait_for_input"],
                                      "active_prompt": None,
                                      })
+            
+        
+        if len(st.session_state["retrieved_docs"]) > 0 and st.session_state["rag_step"] == steps["wait_for_input"]:
+            _render_retrieved_docs_fragment(_serialize_retrieved_docs(st.session_state["retrieved_docs"]), key_prefix="live_")
         # st.session_state["rag_step"] = steps["wait_for_input"]
