@@ -137,8 +137,8 @@ class DatabaseFileExplorer:
                 'is_directory': is_directory,
                 'size': data.get("__size__", 0) if not is_directory else 0,
                 'full_path': data.get("__full_path__", ""),
-                'valid_from': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_from", "Unbekannt") if not is_directory else None,
-                'valid_to': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_to", "Unbekannt") if not is_directory else None,
+                'valid_from': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_from", 15000101) if not is_directory else None,
+                'valid_to': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_to", 99991231) if not is_directory else None,
             })
         
         # Sort: folders first, then files, alphabetically
@@ -742,6 +742,9 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         
         with st.expander("📁 Ausgewählte Dateien anzeigen", expanded=True):
             for uploaded_file in uploaded_files:
+                if "new_docs" not in st.session_state:
+                    st.session_state.new_docs = {}
+                
                 file_size = uploaded_file.size
                 st.markdown(f"📄 **{uploaded_file.name}** ({file_size:,} Bytes)")
                 col1, col2 = st.columns([1, 1])
@@ -752,6 +755,8 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         key=f"valid_from_{uploaded_file.name}",
                         format="DD.MM.YYYY")
                     valid_from_int = int(valid_from.strftime("%Y%m%d")) if valid_from else 0
+                    st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
+                    st.session_state.new_docs[uploaded_file.name]["valid_from"] = valid_from_int
                 with col2:
                     valid_to = st.date_input(
                         f"Gültig bis (optional)",
@@ -759,7 +764,8 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         key=f"valid_to_{uploaded_file.name}",
                         format="DD.MM.YYYY")
                     valid_to_int = int(valid_to.strftime("%Y%m%d")) if valid_to else 99991231
-                
+                    st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
+                    st.session_state.new_docs[uploaded_file.name]["valid_to"] = valid_to_int
                 # Validation
                 if valid_from and valid_to and valid_from > valid_to:
                     st.error("'Gültig ab' darf nicht nach 'Gültig bis' liegen.")
@@ -772,6 +778,16 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         if st.button("✅ Dateien hochladen und zum Vektorstore hinzufügen", key="confirm_upload", type="primary", use_container_width=True):
             uploads_dir = "uploads"
             os.makedirs(uploads_dir, exist_ok=True)
+            
+            if os.path.exists(persist_directory):
+                st.info(f"ℹ️ Der Vektorstore-Ordner '{persist_directory}' existiert bereits. Neue Dateien werden hinzugefügt.")
+            # load validity file
+            if "doc_validity" not in st.session_state:
+                if os.path.exists(f"{persist_directory}/doc_validity.json"):
+                    doc_validity = json.load(open(f"{persist_directory}/doc_validity.json"))
+                else:
+                    doc_validity = {}
+                st.session_state.doc_validity = doc_validity                
             
             with st.status("🔄 Verarbeite Dateien...", expanded=True) as status:
                 try:
@@ -799,7 +815,11 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         # Update progress
                         progress = int(idx * 50 / len(uploaded_files))  # 0-50%
                         progress_bar.progress(progress)
-                    
+                        
+                        st.session_state.doc_validity[file_path] = {
+                            "valid_from": st.session_state.new_docs[uploaded_file.name].get("valid_from"),
+                            "valid_to": st.session_state.new_docs[uploaded_file.name].get("valid_to")}
+                    json.dump(st.session_state.doc_validity, open(f"{persist_directory}/doc_validity.json", "w"), indent=4)
                     st.success(f"✅ {saved_count} Datei(en) erfolgreich gespeichert.")
                     
                     # Step 2: Add to vector store

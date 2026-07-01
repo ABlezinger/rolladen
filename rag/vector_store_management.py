@@ -634,10 +634,6 @@ def create_unified_vector_store(original_data_folder: str, original_persist_dire
     split_docs = text_splitter.split_documents(all_docs)
     print(f"Split documents into {len(split_docs)} chunks")
     
-    # add validity information to text
-    # for doc in split_docs:
-    #     valid_string = f"Gültig von: {doc.metadata['valid_from']}, Gültig bis: {doc.metadata['valid_to']}".replace("unknown", "unbekannt")
-    #     doc.page_content += f"\n\n{valid_string}"
 
     print(split_docs[:2])
     print(f"Split documents into {len(split_docs)} chunks")
@@ -748,6 +744,11 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
     print(f"Embedding model: {model}")
     
     try:
+            # load validity file
+        if os.path.exists(f"{persist_directory}/doc_validity.json"):
+            doc_validity = json.load(open(f"{persist_directory}/doc_validity.json"))
+        else:
+            doc_validity = {}
         # Initialize OpenAI client
         client = OpenAI(
             base_url="https://chat-ai.academiccloud.de/v1",
@@ -783,13 +784,14 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
                             safe_path = file_path.encode("utf-8", errors="replace").decode("utf-8")
                             print(f"Found new document: {safe_path}")
                         try:
-                            docs = load_document(file_path)
+                            docs = load_document(file_path, doc_validity)
                             if docs:
                                 # Clean the text content
                                 for doc in docs:
                                     if hasattr(doc, 'page_content'):
                                         try:
                                             doc.page_content = clean_text(doc.page_content)
+                                            
                                         except (UnicodeDecodeError, UnicodeEncodeError) as e:
                                             print(f"⚠️ Encoding error cleaning content from {file_path}: {str(e)}")
                                             # Try to fix encoding issues
@@ -802,6 +804,13 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
                                             except Exception as e2:
                                                 print(f"⚠️ Could not fix encoding for {file_path}, skipping document: {str(e2)}")
                                                 continue
+                                    if hasattr(doc, 'metadata'):
+                                        doc_validity.update(
+                                            {
+                                                doc.metadata["source"]: {
+                                                    "valid_from": doc.metadata["valid_from"],
+                                                    "valid_to": doc.metadata["valid_to"]}
+                                            })
                                 new_docs.extend(docs)
                             else:
                                 print(f"⚠️ No documents loaded from {file_path} (file may be empty or corrupted)")
@@ -820,6 +829,8 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
                     else:
                         print(f"Document already exists: {file_path}")
         
+        print(f"Write validity information to {persist_directory}/doc_validity.json")
+        json.dump(doc_validity, open(f"{persist_directory}/doc_validity.json", "w"), indent=4)
         if failed_files:
             print(f"\n⚠️ Failed to process {len(failed_files)} file(s):")
             for file_path, error in failed_files:

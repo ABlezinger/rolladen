@@ -3,7 +3,7 @@ rsev
 rsev_v2*
 *.sqlite3
 
-**/*pycache*/
+**/__pycache__/
 .streamlit/secrets.toml
 
 .conda
