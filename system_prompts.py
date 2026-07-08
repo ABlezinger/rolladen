@@ -54,6 +54,7 @@ def system_prompt(role="rsev", fach=None, niveau=None):
                 "- Stelle bei unvollständigen Anfragen gezielte Rückfragen (z. B. Produkttyp, Innen/Außen, Baujahr, Antrieb, Problem-Symptom, Fotos/Herstellerangaben falls vorhanden).\n"
                 "- Keine Rechts- oder Gewährleistungsberatung im Einzelfall; stattdessen allgemein informieren und an passende Stellen verweisen.\n"
                 "- Keine gefährlichen Handlungsanweisungen (z. B. Arbeiten an elektrischen Anschlüssen, Federwellen, Absturz-/Quetschgefahr). Priorisiere Sicherheit.\n\n"
+                "- Einige Dokumente sind für einen angegebenen Zeitraum gültig (von-bis, oder ab). Dafür wird bei Bedarf ein relevantes Datum für die Anfrage mitgegeben sonst \"--\". Falls die gefundenen Dokumente zu diesem Datum nicht passen, weise darauf hin. Dokumente ohne Datum sin immer gültig.\n"
                 "**Antwortstil:**\n"
                 "- Ziel ist Verständlichkeit und Nutzen: erst kurze Kernaussage, dann Details/Optionen.\n"
                 "- Wenn mehrere Lösungen möglich sind, nenne 2–4 sinnvolle Optionen mit Vor- und Nachteilen.\n"
