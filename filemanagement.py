@@ -257,6 +257,21 @@ class DatabaseFileExplorer:
                 .st-key-db_file_explorer_container hr {
                     margin-top: 15px;
                 }
+                .st-key-db_file_explorer_container [data-testid="stVerticalBlockBorderWrapper"] [data-testid="column"] {
+                    padding: 0rem 0.15rem;
+                }
+                .st-key-db_file_explorer_container .file-actions-row {
+                    display: flex;
+                    gap: 0.25rem;
+                    align-items: center;
+                }
+                .st-key-db_file_explorer_container .file-actions-row button {
+                    padding: 0.15rem 0.35rem;
+                    min-height: 1.8rem;
+                    height: 1.8rem;
+                    line-height: 1;
+                    font-size: 0.85rem;
+                }
             </style>
         """)
         
@@ -343,91 +358,6 @@ class DatabaseFileExplorer:
                 header[4].markdown("**Aktionen**")
 
                 st.divider()
-                # col1, col2, col3, col4, col5, col6 = st.columns([7, 2, 2, 2, 1, 1])
-                # with col1:
-                #     st.caption("Dateiname")
-                # with col2:
-                #     st.caption("Größe")
-                # with col3:
-                #     st.caption("Gültig von")
-                # with col4:
-                #     st.caption("Gütlig bis")
-                # with col5:
-                #     st.caption("Löschen")
-                # with col6:
-                #     st.caption("Herunterladen")
-                # for idx, item in enumerate(paginated_items):
-                    
-                #     # col1, col2, col3, col4, col5, col6 = st.columns([7, 2, 2, 2, 1, 1])
-                #     with col1:
-                #         if item['is_directory']:
-                #             if st.button(
-                #                 f"📁 {item['name']}", 
-                #                 key=f"{self.key_prefix}dir_{idx}_{item['name']}"):
-                #                 st.session_state[self._get_state_key('current_path_parts')].append(item['name'])
-                #                 st.session_state[self._get_state_key('current_page')] = 1
-                #                 st.rerun()
-                #         else:
-                #             # File icon based on extension
-                #             file_icon = "📄"
-                #             if item['name'].lower().endswith('.pdf'):
-                #                 file_icon = "📕"
-                #             elif item['name'].lower().endswith(('.docx', '.doc')):
-                #                 file_icon = "📘"
-                #             elif item['name'].lower().endswith(('.xlsx', '.xls')):
-                #                 file_icon = "📗"
-                #             st.text(f"{file_icon} {item['name']}")
-                    
-                #     with col2:
-                #         if not item['is_directory']:
-                #             st.text(self._format_size(item['size']))
-                            
-                #     with col3:
-                #         if not item['is_directory']:
-                #             # Edit button for files only (functionality can be implemented as needed)
-                #             text = f"{item['valid_from']}".replace("unknown", "--")
-                #             st.caption(body=text)
-                    
-                #     with col4:
-                #         if not item['is_directory']:
-                #             text = f"{item['valid_to']}".replace("unknown", "--")
-                #             st.caption(body=text)
-                #     with col5:
-                #         if not item['is_directory'] and item['full_path']:
-                #             # Delete button for files only
-                #             if st.button('🗑️', key=f"{self.key_prefix}del_{idx}_{item['name']}", help="Datei löschen"):
-                #                 # Confirmation in a separate dialog using session state
-                #                 st.session_state[self._get_state_key('delete_confirm_file')] = item['full_path']
-                #                 st.session_state[self._get_state_key('delete_confirm_name')] = item['name']
-                #                 st.rerun()
-                                
-                #     with col6:
-                #         if not item['is_directory']:
-                #             print(item)
-                #             source_path = item['full_path']
-                #             if source_path and os.path.isfile(source_path):
-                #                 try:
-                #                     with open(source_path, "rb") as file_handle:
-                #                         file_bytes = file_handle.read()
-
-                #                     mime_type = mimetypes.guess_type(source_path)[0] or "application/octet-stream"
-                #                     st.download_button(
-                #                         label="⬇️",
-                #                         data=file_bytes,
-                #                         file_name=os.path.basename(source_path),
-                #                         help="Datei herunterladen",
-                #                         mime=mime_type,
-                #                         key=f"download_{item.get('name', idx)}",
-                #                     )
-                #                 except Exception as e:
-                #                     st.download_button(
-                #                         label="⬇️", 
-                #                         help=f"Download nicht verfügbar: {str(e)}",
-                #                         data="", 
-                #                         key=f"download_error_{idx}_{item['name']}",
-                #                         disabled=True)
-                                    
-                #     st.divider()
                 
                 for idx, item in enumerate(paginated_items):
 
@@ -435,7 +365,7 @@ class DatabaseFileExplorer:
                     name = item["name"]
                     icon = "📁" if is_dir else self.file_icon(name)
 
-                    col1, col2, col3, col4, col5 = st.columns([7, 2, 2, 2, 3])
+                    col1, col2, col3, col4, col5 = st.columns([7, 2, 2, 2, 3], vertical_alignment="center")
 
                     # ---------- NAME / NAVIGATION ----------
                     with col1:
@@ -457,49 +387,51 @@ class DatabaseFileExplorer:
                         if not is_dir:
                             valid_from = item.get("valid_from", 15000101)  # Default to a very old date if not set
                             date_string = f"{datetime.datetime.strptime(str(valid_from), '%Y%m%d').strftime('%d.%m.%Y')}" if valid_from != 15000101 else "--"
-                            st.write(date_string)
+                            st.markdown(
+                                f"<div style='display:flex; align-items:center; justify-content:center; height:100%; font-size:0.8rem; line-height:1; margin:0; white-space:nowrap;'>{date_string}</div>",
+                                unsafe_allow_html=True,
+                            )
 
                     # ---------- VALID TO ----------
                     with col4:
                         if not is_dir:
                             valid_to = item.get("valid_to", 99991231)  # Default to a far future date if not set
                             to_date_string = f"{datetime.datetime.strptime(str(valid_to), '%Y%m%d').strftime('%d.%m.%Y')}" if valid_to != 99991231 else "--"
-                            st.write(to_date_string)
+                            st.markdown(
+                                f"<div style='display:flex; align-items:center; justify-content:center; height:100%; font-size:0.8rem; line-height:1; margin:0; white-space:nowrap;'>{to_date_string}</div>",
+                                unsafe_allow_html=True,
+                            )
 
                     # ---------- ACTIONS ----------
                     with col5:
                         if not is_dir:
-                            st.markdown(
-                                "<div style='display:flex; gap:4px; align-items:center;'>",
-                                unsafe_allow_html=True
-                            )
+                            action_delete, action_download = st.columns([1, 1], vertical_alignment="center")
 
-                            # DELETE
-                            if st.button("🗑️", key=f"del_{idx}", help="Löschen"):
-                                st.session_state[self._get_state_key("delete_confirm_file")] = item["full_path"]
-                                st.session_state[self._get_state_key("delete_confirm_name")] = name
-                                st.rerun()
+                            with action_delete:
+                                if st.button("🗑️", key=f"del_{idx}", help="Löschen"):
+                                    st.session_state[self._get_state_key("delete_confirm_file")] = item["full_path"]
+                                    st.session_state[self._get_state_key("delete_confirm_name")] = name
+                                    st.rerun()
 
-                            # DOWNLOAD
-                            path = item.get("full_path")
-                            if path and os.path.isfile(path):
-                                try:
-                                    with open(path, "rb") as f:
-                                        data = f.read()
+                            with action_download:
+                                path = item.get("full_path")
+                                if path and os.path.isfile(path):
+                                    try:
+                                        with open(path, "rb") as f:
+                                            data = f.read()
 
-                                    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+                                        mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
 
-                                    st.download_button(
-                                        "⬇️",
-                                        data=data,
-                                        file_name=os.path.basename(path),
-                                        mime=mime,
-                                        key=f"dl_{idx}"
-                                    )
+                                        st.download_button(
+                                            "⬇️",
+                                            data=data,
+                                            file_name=os.path.basename(path),
+                                            mime=mime,
+                                            key=f"dl_{idx}"
+                                        )
 
-                                except Exception:
-                                    st.caption("❌")
-                        st.markdown("</div>", unsafe_allow_html=True)
+                                    except Exception:
+                                        st.caption("❌")
 
             # Handle deletion confirmation
             if self._get_state_key('delete_confirm_file') in st.session_state:
