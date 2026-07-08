@@ -40,7 +40,18 @@ def _render_retrieved_doc(doc, key_prefix="", doc_index=0):
     st.markdown(f"📄 **Dokument:** `{metadata.get('doc_id', 'Unbekannt')}`")
     st.markdown(f"📂 **Ordner:** `{metadata.get('folder', 'Unbekannt')}`")
     st.markdown(f"📜 **Quelle:** `{metadata.get('source', 'Unbekannt')}`")
-    st.markdown(f"📑 **Seite:** `{metadata.get('page_number', 'Unbekannt')}`")
+    st.markdown(f"📑 **Seite:** `{metadata.get('page_number', 'Unbkannt')}`")
+    valid_from = metadata["valid_from"]
+    if valid_from == 15000101:
+        valid_from = "-"
+    else: 
+        valid_from = datetime.strptime(str(valid_from), "%Y%m%d").strftime("%d.%m.%Y")
+    valid_to = metadata["valid_to"]
+    if valid_to == 99991231:
+        valid_to = "-"
+    else:
+        valid_to = datetime.strptime(str(valid_to), "%Y%m%d").strftime("%d.%m.%Y")
+    st.markdown(f"📅 **Gültig von:** `{valid_from}`, **bis:** `{valid_to}`")
 
     if source_path and os.path.isfile(source_path):
         try:
@@ -62,6 +73,22 @@ def _render_retrieved_doc(doc, key_prefix="", doc_index=0):
 
     st.markdown("**🔍 Relevanter Ausschnitt:**")
     st.markdown(doc.get("page_content", ""))
+    
+def _create_context_snippet(doc):
+    """Create a context snippet for the system prompt from a Document object."""
+    metadata = doc.metadata
+    valid_from = metadata["valid_from"]
+    if valid_from == 15000101:
+        valid_from = "-"
+    else: 
+        valid_from = datetime.strptime(str(valid_from), "%Y%m%d").strftime("%d.%m.%Y")
+    
+    valid_to = metadata["valid_to"]
+    if valid_to == 99991231:
+        valid_to = "-"
+    else:
+        valid_to = datetime.strptime(str(valid_to), "%Y%m%d").strftime("%d.%m.%Y")
+    return doc.page_content + "\nGültig von: " + valid_from + ", bis: " + valid_to
 
 
 @st.fragment
@@ -106,7 +133,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
     
     
     # tracing rag_steps for correct displays 
-    # "initial" -> "awaiting_date" -> "date_received" -> "answering"
     steps = {
         "wait_for_input": 1,
         "wait_for_safety_check": 2,
@@ -146,7 +172,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
         st.rerun()
             
         
-        # Safety-Check
+    # ===== Safety-Check =====
     if st.session_state["rag_step"] == steps["wait_for_safety_check"]:
         with st.status("🔒 Führe Sicherheitsüberprüfung durch...", expanded=True) as status: 
             is_safe, explanation = check_safety_llama_guard_3(st.session_state["active_prompt"])
@@ -169,6 +195,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
         # ===== Retrieve relevant context =====
         with st.status("🔍 Suche relevante Informationen...", expanded=True) as status:
             try:
+                print("prompt:", st.session_state["active_prompt"])
                 retrieved_docs = vector_store.similarity_search(st.session_state["active_prompt"], k=5)
                 print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state["active_prompt"]}'")
                 
@@ -229,8 +256,12 @@ def run_chatbot(vector_store, client, with_thinking=True):
             st.rerun()
 
             # Continue only after submit
+            
+    # ==== Answering the question with context =====
     if st.session_state["rag_step"] >= steps["date_received"]:
         st.session_state["rag_step"] = steps["answering"]
+        
+        # Check if another time relevant query is necessary
         if "relevant_date" not in st.session_state:
             st.status("✅ Keine zeitlich relevanten Quellen gefunden", state="complete")
         else:                        
@@ -266,13 +297,16 @@ def run_chatbot(vector_store, client, with_thinking=True):
         # ===== Build an augmented system prompt from the base prompt and the newly retrieved context. =====
         if st.session_state["rag_step"] == steps["answering"]:
             
-            context = "\n\n".join([doc.page_content for doc in st.session_state["retrieved_docs"]]) if st.session_state["retrieved_docs"] else "Keine relevanten Dokumente gefunden."
+            context = "\n\n".join([
+                _create_context_snippet(doc)
+                for doc in st.session_state["retrieved_docs"]]) if st.session_state["retrieved_docs"] else "Keine relevanten Dokumente gefunden."
             with st.status("🔍 Initialisiert das Modell...", expanded=True) as status:
                 system_prompt_with_context = (
                     st.session_state["base_system_prompt"] +
                     "\n\n=== Kontext aus Dokumenten ===\n" +
                     context +
                     "\n=== Ende Kontext ===\n"
+                    "\n Relevantes Datum: " + (st.session_state.get("relevant_date").strftime("%d.%m.%Y") if st.session_state.get("relevant_date") else "--")
                 )
 
                 
@@ -280,7 +314,8 @@ def run_chatbot(vector_store, client, with_thinking=True):
                 # Build the messages list using the augmented prompt.
                 messages = [{"role": "system", "content": system_prompt_with_context}] + st.session_state.messages
                 # =============================================================
-
+                print("CALLING API WITH MESSAGES:")
+                print(messages)
                 # Call the API.
                 completion = client.chat.completions.create(
                     model=st.session_state["openai_model"],
@@ -290,6 +325,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
                     stream=True  # Enable streaming
                 )
 
+                # print("Query:", system_prompt_with_context)
 
                 # Initialize variables to collect the full response
                 full_response = ""
