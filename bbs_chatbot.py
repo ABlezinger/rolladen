@@ -132,8 +132,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
             if metadata.get("thinking_text"):
                 with st.expander("Gedankengang anzeigen"):
                     st.markdown(metadata["thinking_text"])
-            print("OLDDOCS")
-            print(retrieved_docs)
+
             if retrieved_docs:
                 _render_retrieved_docs_fragment(retrieved_docs, key_prefix=f"history_{message_index}_")
 
@@ -164,15 +163,12 @@ def run_chatbot(vector_store, client, with_thinking=True):
             status.update(label="✅ Sicherheitsüberprüfung erfolgreich", state="complete")
     elif st.session_state["rag_step"] >= steps["safety_checked"]:
         with st.status(label="✅ Sicherheitsüberprüfung erfolgreich", state="complete") as status:
-            print("SADOASDOAISjd")
-        
+            pass
         
     if st.session_state["rag_step"] == steps["safety_checked"]:
         # ===== Retrieve relevant context =====
         with st.status("🔍 Suche relevante Informationen...", expanded=True) as status:
             try:
-                print("EINS")
-                print("promt:", st.session_state["active_prompt"])
                 retrieved_docs = vector_store.similarity_search(st.session_state["active_prompt"], k=5)
                 print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state["active_prompt"]}'")
                 
@@ -195,7 +191,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
             st.session_state.retrieved_docs = retrieved_docs
         st.session_state["rag_step"] = steps["context_retrieved"]
         
-        print(st.session_state["messages"])
         
     elif st.session_state["rag_step"] >= steps["context_retrieved"] and "retrieved_docs" in st.session_state:
         with st.status(label="✅ Relevante Informationen gefunden", state="complete") as status:
@@ -225,7 +220,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
                 st.session_state["rag_step"] = steps["date_received"]
                 st.rerun()
             else:
-                print("DATE: ", st.session_state.get("relevant_date", "No date set"))
                 st.stop()
             
             # st.session_state.relevant_date = timestamp
@@ -286,8 +280,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
                 # Build the messages list using the augmented prompt.
                 messages = [{"role": "system", "content": system_prompt_with_context}] + st.session_state.messages
                 # =============================================================
-                print("FINAL PROMPT")
-                print(messages)
+
                 # Call the API.
                 completion = client.chat.completions.create(
                     model=st.session_state["openai_model"],
@@ -297,7 +290,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
                     stream=True  # Enable streaming
                 )
 
-                print("Query:", system_prompt_with_context)
 
                 # Initialize variables to collect the full response
                 full_response = ""
@@ -318,7 +310,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
                     except StopIteration:
                         first_chunk = None
                         break
-                print(first_chunk)
                 first_content = _get_stream_content(first_chunk) if first_chunk is not None else None
                 if first_content is not None:
                     if first_content.startswith("<think>"):
