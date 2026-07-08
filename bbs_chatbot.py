@@ -158,8 +158,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
             if metadata.get("thinking_text"):
                 with st.expander("Gedankengang anzeigen"):
                     st.markdown(metadata["thinking_text"])
-            print("OLDDOCS")
-            print(retrieved_docs)
+
             if retrieved_docs:
                 _render_retrieved_docs_fragment(retrieved_docs, key_prefix=f"history_{message_index}_")
 
@@ -219,7 +218,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
             st.session_state.retrieved_docs = retrieved_docs
         st.session_state["rag_step"] = steps["context_retrieved"]
         
-        print(st.session_state["messages"])
         
     elif st.session_state["rag_step"] >= steps["context_retrieved"] and "retrieved_docs" in st.session_state:
         with st.status(label="✅ Relevante Informationen gefunden", state="complete") as status:
@@ -249,7 +247,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
                 st.session_state["rag_step"] = steps["date_received"]
                 st.rerun()
             else:
-                print("DATE: ", st.session_state.get("relevant_date", "No date set"))
                 st.stop()
             
             # st.session_state.relevant_date = timestamp
@@ -349,7 +346,6 @@ def run_chatbot(vector_store, client, with_thinking=True):
                     except StopIteration:
                         first_chunk = None
                         break
-                print(first_chunk)
                 first_content = _get_stream_content(first_chunk) if first_chunk is not None else None
                 if first_content is not None:
                     if first_content.startswith("<think>"):
