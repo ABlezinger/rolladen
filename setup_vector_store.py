@@ -17,18 +17,14 @@ Usage Examples:
     # Use default paths
     python setup_vector_store.py fresh
     python setup_vector_store.py extend
+
+    # Sync vector store metadata from doc_list.json
+    python setup_vector_store.py sync-metadata --vector-store rsev_v2
 """
 
 import os
 import sys
 import argparse
-from pathlib import Path
-from rag.vector_store_management import (
-    create_fresh_unified_vector_store, 
-    load_unified_vector_store,
-    extend_existing_vector_store,
-    smart_update_vector_store
-)
 
 def setup_argument_parser():
     """Set up command line argument parser."""
@@ -127,6 +123,18 @@ Examples:
         action='store_true',
         help='Preview what would be added without actually doing it'
     )
+
+    # Metadata sync command
+    metadata_parser = subparsers.add_parser(
+        'sync-metadata',
+        help='Sync title, downloadable and validity metadata from doc_list.json'
+    )
+    metadata_parser.add_argument(
+        '--vector-store',
+        type=str,
+        default="rsev_v2",
+        help='Path to existing vector store directory (default: rsev_v2)'
+    )
     
     return parser
 
@@ -146,6 +154,8 @@ def validate_paths(data_folder, vector_store_path=None):
 
 def create_fresh_vector_store(data_folder, output_dir, model):
     """Create a fresh unified vector store."""
+    from rag.vector_store_management import create_fresh_unified_vector_store, load_unified_vector_store
+
     print("🚀 BBS Vector Store Setup - Fresh Creation")
     print("=" * 50)
     
@@ -181,6 +191,8 @@ def create_fresh_vector_store(data_folder, output_dir, model):
 
 def extend_vector_store(data_folder, vector_store_path, model, dry_run=False):
     """Extend existing vector store with new documents."""
+    from rag.vector_store_management import extend_existing_vector_store, load_unified_vector_store
+
     print("🚀 BBS Vector Store Setup - Extension")
     print("=" * 50)
     
@@ -217,6 +229,8 @@ def extend_vector_store(data_folder, vector_store_path, model, dry_run=False):
 
 def smart_update_vector_store_cmd(main_directory, vector_store_path, model, dry_run=False):
     """Smart update: scan main directory and add only new documents."""
+    from rag.vector_store_management import load_unified_vector_store, smart_update_vector_store
+
     print("🚀 BBS Vector Store Setup - Smart Update")
     print("=" * 50)
     
@@ -251,6 +265,22 @@ def smart_update_vector_store_cmd(main_directory, vector_store_path, model, dry_
         print("❌ Failed to update vector store")
         return False
 
+
+def sync_vector_store_metadata_from_doc_list(vector_store_path: str):
+    """Update selected metadata fields in the vector store from doc_list.json."""
+    from rag.vector_store_management import sync_metadata
+
+    print("🚀 BBS Vector Store Metadata Sync")
+    print("=" * 50)
+    if not validate_paths(vector_store_path, vector_store_path):
+        return False
+
+    
+    result = sync_metadata(vector_store_path, client =None, model="qwen3-embedding-4b")
+    return bool(result.get("success"))
+
+
+
 def main():
     """Main CLI entry point."""
     parser = setup_argument_parser()
@@ -267,6 +297,8 @@ def main():
             return extend_vector_store(args.data_folder, args.vector_store, args.model, args.dry_run)
         elif args.command == 'update':
             return smart_update_vector_store_cmd(args.main_directory, args.vector_store, args.model, args.dry_run)
+        elif args.command == 'sync-metadata':
+            return sync_vector_store_metadata_from_doc_list(args.vector_store)
         else:
             print(f"❌ Unknown command: {args.command}")
             parser.print_help()
