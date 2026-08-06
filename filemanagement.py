@@ -8,7 +8,8 @@ from rag.vector_store_management import (
     check_vector_store_status, 
     OpenAIEmbeddingsWrapper,
     load_unified_vector_store,
-    delete_document_from_vector_store
+    delete_document_from_vector_store,
+    sync_metadata
 )
 from pathlib import Path
 from langchain_community.vectorstores import Chroma
@@ -40,9 +41,9 @@ class DatabaseFileExplorer:
         self.key_prefix = key_prefix
         self.items_per_page_options = items_per_page_options
         if os.path.exists(persist_directory):
-            self.doc_validity = json.load(open(f"{self.persist_directory}/doc_validity.json"))  # To store validity info for documents
+            self.docs_info = json.load(open(f"{self.persist_directory}/doc_list.json"))  # To store info for documents
         else:
-            self.doc_validity = {}
+            self.docs_info = {}
         
         # Build virtual file tree
         self.file_tree = self._build_virtual_tree()
@@ -137,8 +138,8 @@ class DatabaseFileExplorer:
                 'is_directory': is_directory,
                 'size': data.get("__size__", 0) if not is_directory else 0,
                 'full_path': data.get("__full_path__", ""),
-                'valid_from': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_from", 15000101) if not is_directory else None,
-                'valid_to': self.doc_validity.get(data.get("__full_path__", ""), {}).get("valid_to", 99991231) if not is_directory else None,
+                'valid_from': self.docs_info.get(data.get("__full_path__", ""), {}).get("valid_from", 15000101) if not is_directory else None,
+                'valid_to': self.docs_info.get(data.get("__full_path__", ""), {}).get("valid_to", 99991231) if not is_directory else None,
             })
         
         # Sort: folders first, then files, alphabetically
@@ -496,7 +497,7 @@ class DatabaseFileExplorer:
 # add near top of file
 @st.fragment
 def _render_db_explorer_fragment(file_paths, client, persist_directory, embedding_model, skip_prefix, key_prefix):
-    with st.expander(f"📂 Datei-Explorer ({len(file_paths)} Dateien)", expanded=False):
+    with st.expander(f"📂 Datei-Explorer ({len(file_paths)} Dateien)", expanded=True):
         st.caption("💡 Die Ansicht zeigt Ordner ab 'drive_download_combined' + den 'uploads' Ordner")
         explorer = DatabaseFileExplorer(
             file_paths=file_paths,
@@ -596,6 +597,13 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
     # If authenticated, show file management interface
     st.title("Datei-Upload (Word & PDF)")
     
+    if "docs_info" not in st.session_state:
+        if os.path.exists(f"{persist_directory}/doc_list.json"):
+            docs_info = json.load(open(f"{persist_directory}/doc_list.json"))
+        else:
+            docs_info = {}
+        st.session_state.docs_info = docs_info
+
     # Logout button
     if st.button("🔓 Abmelden", key="file_management_logout_button"):
         st.session_state.file_management_authenticated = False
@@ -674,13 +682,20 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         
         with st.expander("📁 Ausgewählte Dateien anzeigen", expanded=True):
             for uploaded_file in uploaded_files:
+                
+                ## Dokumnt Upload Maske 
                 if "new_docs" not in st.session_state:
                     st.session_state.new_docs = {}
                 
                 file_size = uploaded_file.size
                 st.markdown(f"📄 **{uploaded_file.name}** ({file_size:,} Bytes)")
-                col1, col2 = st.columns([1, 1])
+                #Title
+                doc_title = st.text_input("Geben Sie der Datei einen Namen", key=f"doc_name_{uploaded_file.name}")
+                if doc_title:
+                    st.session_state.new_docs[uploaded_file.name]["title"] = doc_title if doc_title else uploaded_file.name
+                col1, col2, col3= st.columns([2, 2, 1])
                 with col1:
+                    #valid From
                     valid_from = st.date_input(
                         f"Gültig von (optional)",
                         value=None,
@@ -690,6 +705,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                     st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
                     st.session_state.new_docs[uploaded_file.name]["valid_from"] = valid_from_int
                 with col2:
+                    #Valid To
                     valid_to = st.date_input(
                         f"Gültig bis (optional)",
                         value=None,
@@ -698,9 +714,23 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                     valid_to_int = int(valid_to.strftime("%Y%m%d")) if valid_to else 99991231
                     st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
                     st.session_state.new_docs[uploaded_file.name]["valid_to"] = valid_to_int
+                    
+                with col3:
+                    #Downloadable
+                    downloadable = st.checkbox("Kann heruntergeladen werden ", value=False, key=f"downloadable_{uploaded_file.name}")
+                    st.session_state.new_docs[uploaded_file.name]["downloadable"] = downloadable
                 # Validation
                 if valid_from and valid_to and valid_from > valid_to:
                     st.error("'Gültig ab' darf nicht nach 'Gültig bis' liegen.")
+                # Replace existing document option
+                if replace_box := st.checkbox("Das Dokument ersetzt ein existierendes Dokument", value=False, key=f"replace_document_{uploaded_file.name}"):
+                    existing_docs = {os.path.basename(doc.get("title", source)): source for source, doc in st.session_state.docs_info.items()}
+                    replace_select = st.selectbox("Bitte wählen Sie das zu ersetzende Dokument aus:",
+                        options=list(existing_docs.keys()),
+                        key=f"replace_select_{uploaded_file.name}",
+                        disabled=not replace_box
+                    )
+                    st.session_state.new_docs[uploaded_file.name]["replace_document"] = replace_select
         
         st.divider()
         
@@ -708,18 +738,25 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         st.markdown("**Die Dateien werden gespeichert und automatisch zum Chatbot-Vektorstore hinzugefügt.**")
         
         if st.button("✅ Dateien hochladen und zum Vektorstore hinzufügen", key="confirm_upload", type="primary", use_container_width=True):
+            #titlecheck
+            for uploaded_file in uploaded_files:
+                if not st.session_state.new_docs[uploaded_file.name].get("title"):
+                    st.error(f"❌ Bitte geben Sie einen Titel für die Datei '{uploaded_file.name}' ein.")
+                    return
+            
+            
             uploads_dir = "uploads"
             os.makedirs(uploads_dir, exist_ok=True)
             
             if os.path.exists(persist_directory):
                 st.info(f"ℹ️ Der Vektorstore-Ordner '{persist_directory}' existiert bereits. Neue Dateien werden hinzugefügt.")
-            # load validity file
-            if "doc_validity" not in st.session_state:
-                if os.path.exists(f"{persist_directory}/doc_validity.json"):
-                    doc_validity = json.load(open(f"{persist_directory}/doc_validity.json"))
+            # load Doc_info file
+            if "docs_info" not in st.session_state:
+                if os.path.exists(f"{persist_directory}/doc_list.json"):
+                    docs_info = json.load(open(f"{persist_directory}/doc_list.json"))
                 else:
-                    doc_validity = {}
-                st.session_state.doc_validity = doc_validity                
+                    docs_info = {}
+                st.session_state.docs_info = docs_info                
             
             with st.status("🔄 Verarbeite Dateien...", expanded=True) as status:
                 try:
@@ -748,10 +785,19 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         progress = int(idx * 50 / len(uploaded_files))  # 0-50%
                         progress_bar.progress(progress)
                         
-                        st.session_state.doc_validity[file_path] = {
+                        # Add new file to doc_list.json with metadata
+                        st.session_state.docs_info[file_path] = {
+                            "title": st.session_state.new_docs[uploaded_file.name].get("title", uploaded_file.name),
                             "valid_from": st.session_state.new_docs[uploaded_file.name].get("valid_from"),
-                            "valid_to": st.session_state.new_docs[uploaded_file.name].get("valid_to")}
-                    json.dump(st.session_state.doc_validity, open(f"{persist_directory}/doc_validity.json", "w"), indent=4)
+                            "valid_to": st.session_state.new_docs[uploaded_file.name].get("valid_to"),
+                            "downloadable": st.session_state.new_docs[uploaded_file.name].get("downloadable")}
+                        
+                        # handle replace document option
+                        if old_file := st.session_state.new_docs[uploaded_file.name].get("replace_document"):
+                            existing_docs = {os.path.basename(doc.get("title", source)): source for source, doc in st.session_state.docs_info.items()}
+                            st.session_state.docs_info[existing_docs[old_file]]["valid_to"] = st.session_state.new_docs[uploaded_file.name].get("valid_from") - 1
+                            
+                    json.dump(st.session_state.docs_info, open(f"{persist_directory}/doc_list.json", "w"), indent=4)
                     st.success(f"✅ {saved_count} Datei(en) erfolgreich gespeichert.")
                     
                     # Step 2: Add to vector store
@@ -762,6 +808,13 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         persist_directory=persist_directory,
                         model=embedding_model
                     )
+                    
+                    progress_bar.progress(95)  # 95%
+                    
+                    # sync metadata
+                    status.update(label="🔄 Synchronisiere Metadaten...", state="running")
+                    
+                    sync_metadata(persist_directory=persist_directory, client=client, model=embedding_model)
                     
                     progress_bar.progress(100)  # 100%
                     
@@ -827,6 +880,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                 
                 # Clear the success files after displaying
                 del st.session_state['upload_success_files']
+                del st.session_state['new_docs']
             
             elif 'upload_partial_success' in st.session_state:
                 st.error("❌ Dateien wurden gespeichert, aber es gab einen Fehler beim Hinzufügen zum Vektorstore.")

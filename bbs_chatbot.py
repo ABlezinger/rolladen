@@ -65,6 +65,8 @@ def _render_retrieved_doc(doc, key_prefix="", doc_index=0):
                 file_name=os.path.basename(source_path),
                 mime=mime_type,
                 key=f"download_{key_prefix}{metadata.get('doc_id', 00)}_{doc_index}",
+                disabled=not metadata.get("downloadable", False),
+                help="Dieses Dokument steht nicht zum download zur Verfügung." if not metadata.get("downloadable", False) else "Klicke hier, um das Dokument herunterzuladen."
             )
         except Exception as e:
             st.caption(f"Download nicht verfügbar: {str(e)}")
