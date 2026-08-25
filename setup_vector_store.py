@@ -135,6 +135,18 @@ Examples:
         default="rsev_v2",
         help='Path to existing vector store directory (default: rsev_v2)'
     )
+
+    # Document index command
+    doc_index_parser = subparsers.add_parser(
+        'doc-index',
+        help='Create or refresh only the document index in the vector store'
+    )
+    doc_index_parser.add_argument(
+        '--vector-store',
+        type=str,
+        default="rsev_v2",
+        help='Path to existing vector store directory (default: rsev_v2)'
+    )
     
     return parser
 
@@ -280,6 +292,72 @@ def sync_vector_store_metadata_from_doc_list(vector_store_path: str):
     return bool(result.get("success"))
 
 
+def refresh_document_index_only(vector_store_path: str):
+    """Rebuild only the document index chunk(s) and store them in the vector store."""
+    from langchain_community.vectorstores import Chroma
+    from openai import OpenAI
+    import streamlit as st
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    from rag.vector_store_management import (
+        OpenAIEmbeddingsWrapper,
+        check_vector_store_status,
+        create_doc_index_document_chunks,
+        delete_document_from_vector_store,
+    )
+
+    print("🚀 BBS Vector Store Document Index Refresh")
+    print("=" * 50)
+
+    if not validate_paths(vector_store_path, vector_store_path):
+        return False
+
+    doc_list_path = os.path.join(vector_store_path, "doc_list.json")
+    if not os.path.exists(doc_list_path):
+        print(f"❌ doc_list.json not found: {doc_list_path}")
+        return False
+
+    client = OpenAI(
+        base_url="https://chat-ai.academiccloud.de/v1",
+        api_key=st.secrets["KISSKI_API_KEY"],
+    )
+    model = "qwen3-embedding-4b"
+    embeddings = OpenAIEmbeddingsWrapper(client, model)
+    vector_store = Chroma(persist_directory=vector_store_path, embedding_function=embeddings)
+
+    _, metadata_count = check_vector_store_status(vector_store_path, embeddings)
+    print(f"📊 Vector store currently contains {metadata_count} metadata entries")
+
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+        add_start_index=True,
+    )
+
+    index_chunks = create_doc_index_document_chunks(
+        __import__("json").load(open(doc_list_path, "r", encoding="utf-8")),
+        text_splitter,
+    )
+
+    if not index_chunks:
+        print("❌ No document index chunks were created")
+        return False
+
+    delete_document_from_vector_store(
+        vector_store_path,
+        embeddings,
+        index_chunks[0].metadata.get("source", "document_index"),
+    )
+
+    try:
+        vector_store.add_documents(index_chunks)
+    except Exception as e:
+        print(f"❌ Failed to add document index chunks: {str(e)}")
+        return False
+
+    print(f"✅ Added {len(index_chunks)} document index chunk(s) to the vector store")
+    return True
+
+
 
 def main():
     """Main CLI entry point."""
@@ -299,6 +377,8 @@ def main():
             return smart_update_vector_store_cmd(args.main_directory, args.vector_store, args.model, args.dry_run)
         elif args.command == 'sync-metadata':
             return sync_vector_store_metadata_from_doc_list(args.vector_store)
+        elif args.command == 'doc-index':
+            return refresh_document_index_only(args.vector_store)
         else:
             print(f"❌ Unknown command: {args.command}")
             parser.print_help()

@@ -652,7 +652,6 @@ def updateVectorStore(data_folder: str, persist_directory: str, client: OpenAI, 
         from langchain_text_splitters import RecursiveCharacterTextSplitter
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, add_start_index=True)
         split_docs = text_splitter.split_documents(new_docs)
-        print(len(split_docs))
         try:
             vector_store.add_documents(split_docs)
             print(f"Successfully added {len(split_docs)} document chunks to vector store")
@@ -757,8 +756,6 @@ def create_unified_vector_store(original_data_folder: str, original_persist_dire
     split_docs += index_chunks  
     print(f"Split documents into {len(split_docs)} chunks")
 
-    print(split_docs[:2])
-    print(f"Split documents into {len(split_docs)} chunks")
     # raise NotImplementedError()
     
     if split_docs:
@@ -965,7 +962,6 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
             return vector_store
         
         print(f"Found {len(new_docs)} new documents to add")
-        print(new_docs)
         
         
         

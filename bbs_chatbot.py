@@ -316,8 +316,7 @@ def run_chatbot(vector_store, client, with_thinking=True):
                 # Build the messages list using the augmented prompt.
                 messages = [{"role": "system", "content": system_prompt_with_context}] + st.session_state.messages
                 # =============================================================
-                print("CALLING API WITH MESSAGES:")
-                print(messages)
+
                 # Call the API.
                 completion = client.chat.completions.create(
                     model=st.session_state["openai_model"],

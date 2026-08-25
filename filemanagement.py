@@ -405,7 +405,7 @@ class DatabaseFileExplorer:
 
                     # ---------- ACTIONS ----------
                     with col5:
-                        if not is_dir:
+                        if not is_dir and name != "document_index":
                             action_delete, action_download = st.columns([1, 1], vertical_alignment="center")
 
                             with action_delete:
