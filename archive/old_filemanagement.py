@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 from pswd import verify_password
-from rag.vector_store_management import (
+from src.rag.vector_store_management import (
     extend_existing_vector_store, 
     check_vector_store_status, 
     OpenAIEmbeddingsWrapper,

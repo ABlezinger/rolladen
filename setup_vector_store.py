@@ -166,7 +166,7 @@ def validate_paths(data_folder, vector_store_path=None):
 
 def create_fresh_vector_store(data_folder, output_dir, model):
     """Create a fresh unified vector store."""
-    from rag.vector_store_management import create_fresh_unified_vector_store, load_unified_vector_store
+    from src.rag.vector_store_management import create_fresh_unified_vector_store, load_unified_vector_store
 
     print("🚀 BBS Vector Store Setup - Fresh Creation")
     print("=" * 50)
@@ -203,7 +203,7 @@ def create_fresh_vector_store(data_folder, output_dir, model):
 
 def extend_vector_store(data_folder, vector_store_path, model, dry_run=False):
     """Extend existing vector store with new documents."""
-    from rag.vector_store_management import extend_existing_vector_store, load_unified_vector_store
+    from src.rag.vector_store_management import extend_existing_vector_store, load_unified_vector_store
 
     print("🚀 BBS Vector Store Setup - Extension")
     print("=" * 50)
@@ -241,7 +241,7 @@ def extend_vector_store(data_folder, vector_store_path, model, dry_run=False):
 
 def smart_update_vector_store_cmd(main_directory, vector_store_path, model, dry_run=False):
     """Smart update: scan main directory and add only new documents."""
-    from rag.vector_store_management import load_unified_vector_store, smart_update_vector_store
+    from src.rag.vector_store_management import load_unified_vector_store, smart_update_vector_store
 
     print("🚀 BBS Vector Store Setup - Smart Update")
     print("=" * 50)
@@ -280,11 +280,22 @@ def smart_update_vector_store_cmd(main_directory, vector_store_path, model, dry_
 
 def sync_vector_store_metadata_from_doc_list(vector_store_path: str):
     """Update selected metadata fields in the vector store from doc_list.json."""
-    from rag.vector_store_management import sync_metadata
+    from src.rag.vector_store_management import load_doc_list, sync_metadata
 
     print("🚀 BBS Vector Store Metadata Sync")
     print("=" * 50)
     if not validate_paths(vector_store_path, vector_store_path):
+        return False
+
+    doc_list_path = os.path.join(vector_store_path, "doc_list.json")
+    if not os.path.exists(doc_list_path):
+        print(f"❌ doc_list.json not found: {doc_list_path}")
+        return False
+
+    try:
+        load_doc_list(doc_list_path)
+    except Exception as e:
+        print(f"❌ Failed to validate doc_list.json: {str(e)}")
         return False
 
     

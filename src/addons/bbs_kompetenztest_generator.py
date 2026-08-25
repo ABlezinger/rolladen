@@ -1,10 +1,10 @@
 import streamlit as st
 from openai import OpenAI
 import re
-from system_prompts import system_prompt
-from rag.llama_guard import check_safety_llama_guard_3
-from pdf_generator import run_pdf_generator
-from pdf_generator import run_pdf_download
+from src.rag.system_prompts import system_prompt
+from src.rag.llama_guard import check_safety_llama_guard_3
+from addons.pdf_generator import run_pdf_generator
+from addons.pdf_generator import run_pdf_download
 
 def _get_stream_content(chunk):
     """Safely extract content string from a streaming chunk, or None if unavailable."""
