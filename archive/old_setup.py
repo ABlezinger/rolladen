@@ -17,7 +17,7 @@ For extending with new documents later, use:
 
 import os
 import sys
-from rag.vector_store_management import create_fresh_unified_vector_store, load_unified_vector_store
+from src.rag.vector_store_management import create_fresh_unified_vector_store, load_unified_vector_store
 
 def main():
     print("🚀 BBS Vector Store Setup")

@@ -1,6 +1,6 @@
 import streamlit as st
 from openai import OpenAI
-from system_prompts import system_prompt
+from src.rag.system_prompts import system_prompt
 from fpdf import FPDF
 from datetime import datetime
 import re

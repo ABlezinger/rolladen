@@ -1,24 +1,26 @@
 from openai import OpenAI
 import streamlit as st
 import os
-from system_prompts import system_prompt
+from src.rag.system_prompts import system_prompt
 
-from bbs_chatbot import run_chatbot
-from filemanagement import run_file_management
+from src.chatbot import run_chatbot
+from src.filemanagement import run_file_management
 
 st.set_page_config(page_title="R+S Auskunft", page_icon="assets/images/rsev_favicon.ico")
 st.title("R+S Auskunft – ein DAISEC-Projekt")
-st.logo("assets/images/rsev_x_daisec.png")
+st.logo("assets/images/rsev_x_daisec.png", size="large")
 
 st.html("""
   <style>
     [alt=Logo] {
-      height: 10rem;
+      margin-top: 3rem;
+      height: 9rem;
     }
   </style>
         """)
 
 # --- NAVIGATION ---
+st.sidebar.space("small")
 st.sidebar.markdown("### 🧭 Navigation")
 page = st.sidebar.radio(
     "Modus wählen:",
@@ -38,6 +40,7 @@ if "openai_model" not in st.session_state:
 # Initialize the base system prompt and store it separately.
 if "base_system_prompt" not in st.session_state:
     st.session_state["base_system_prompt"] = system_prompt(role=st.secrets["role"])
+    st.session_state["planning_prompt"] = system_prompt(role=st.secrets["role"]+ "_plan")
     # Also store this as the current system prompt.
     st.session_state["system_prompt"] = st.session_state["base_system_prompt"]
 
@@ -49,7 +52,7 @@ persist_directory = st.secrets["persist_directory"]
 # Initialize vector stores if they aren't already in session state
 if "vector_stores" not in st.session_state:
     try:
-        from rag.vector_store_management import load_unified_vector_store, OpenAIEmbeddingsWrapper
+        from src.rag.vector_store_management import load_unified_vector_store, OpenAIEmbeddingsWrapper
         from langchain_community.vectorstores import Chroma
         
 
@@ -70,7 +73,7 @@ if "vector_stores" not in st.session_state:
                 
                 # Try to load from main directory
                 if os.path.exists(persist_directory) and os.listdir(persist_directory):
-                    st.session_state.vector_stores = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+                    st.session_state.vector_stores = Chroma(persist_directory=persist_directory, embedding_function=embeddings) # type: ignore
                     st.success("✅ Vector store loaded manually!")
                 else:
                     st.error("❌ No vector store found. Please run setup_vector_store.py first.")

@@ -12,7 +12,7 @@ This script will:
 import os
 import shutil
 import sys
-from rag.vector_store_management import load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
+from src.rag.vector_store_management import load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
 from openai import OpenAI
 import streamlit as st
 

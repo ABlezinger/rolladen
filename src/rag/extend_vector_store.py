@@ -18,7 +18,7 @@ For command line usage:
 import os
 import sys
 import argparse
-from rag.vector_store_management import extend_existing_vector_store, load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
+from src.rag.vector_store_management import extend_existing_vector_store, load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
 from openai import OpenAI
 import streamlit as st
 

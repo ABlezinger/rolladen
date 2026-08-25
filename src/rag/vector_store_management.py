@@ -9,6 +9,10 @@ import streamlit as st
 from tqdm import tqdm
 import re
 import json
+import datetime
+from typing import Any
+
+from src.document_utils import DocListEntry
 
 def clean_text(text):
     """
@@ -19,6 +23,47 @@ def clean_text(text):
     text = re.sub(r"-\s*\n\s*", "", text)  # Fix hyphenated words
     text = re.sub(r"\s+", " ", text)  # Collapse multiple spaces/newlines
     return text.strip()
+
+
+def _doc_list_entry_to_dict(source: str, data: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate a doc_list entry and return the stored JSON value shape."""
+
+    entry = DocListEntry.from_doc_list_item(source, data)
+    if hasattr(entry, "model_dump"):
+        return entry.model_dump(exclude={"source"})
+    return entry.dict(exclude={"source"})
+
+
+def _edited_metadata(edited_by: str = "system") -> dict[str, Any]:
+    """Return the default edit metadata for newly authored entries."""
+
+    return {
+        "date_edited": int(datetime.date.today().strftime("%Y%m%d")),
+        "edited_by": edited_by,
+    }
+
+
+def load_doc_list(doc_list_path: str) -> dict[str, dict[str, Any]]:
+    """Load and validate doc_list.json entries."""
+
+    with open(doc_list_path, "r", encoding="utf-8") as handle:
+        raw_doc_list = json.load(handle)
+
+    return {
+        source: _doc_list_entry_to_dict(source, data)
+        for source, data in raw_doc_list.items()
+    }
+
+
+def save_doc_list(doc_list_path: str, doc_list: dict[str, dict[str, Any]]) -> None:
+    """Validate doc_list entries before writing them to disk."""
+
+    validated_doc_list = {
+        source: _doc_list_entry_to_dict(source, data)
+        for source, data in doc_list.items()
+    }
+    with open(doc_list_path, "w", encoding="utf-8") as handle:
+        json.dump(validated_doc_list, handle, indent=4)
 
 # OpenAIEmbeddingsWrapper is a wrapper around the OpenAI embeddings API.
 # It is used to embed documents and queries through the OpenAI API.
@@ -51,6 +96,15 @@ class OpenAIEmbeddingsWrapper:
 
 # A helper function that loads a document from file_path based on its extension.
 def load_document(file_path, doc_info):
+    """Loads a document and adds metadata from doc_list.json
+
+    Args:
+        file_path (str): Document file path
+        doc_info (dict): Document information from doc_list.json
+
+    Returns:
+        list: List of loaded documents with added metadata
+    """
     try:
         # Skip Microsoft Office temporary files
         filename = os.path.basename(file_path)
@@ -103,7 +157,10 @@ def load_document(file_path, doc_info):
                     "valid_from": doc_info.get(safe_file_path, {}).get("valid_from", 15000101),
                     "valid_to": doc_info.get(safe_file_path, {}).get("valid_to", 99991231),
                     "downloadable": doc_info.get(safe_file_path, {}).get("downloadable", False),
-                    "title": doc_info.get(safe_file_path, {}).get("title", "No title")
+                    "title": doc_info.get(safe_file_path, {}).get("title", "No title"),
+                    "date_edited": doc_info.get(safe_file_path, {}).get("date_edited"),
+                    "edited_by": doc_info.get(safe_file_path, {}).get("edited_by", "system"),
+                    "doc_class": doc_info.get(safe_file_path, {}).get("doc_class", 3)
                 })
             except Exception as e:
                 # Fall back to simple metadata if encoding fails
@@ -115,7 +172,10 @@ def load_document(file_path, doc_info):
                     "valid_from": doc_info.get(safe_file_path, {}).get("valid_from", 15000101),
                     "valid_to": doc_info.get(safe_file_path, {}).get("valid_to", 99991231),
                     "downloadable": doc_info.get(safe_file_path, {}).get("downloadable", False),
-                    "title": doc_info.get(safe_file_path, {}).get("title", "No title")
+                    "title": doc_info.get(safe_file_path, {}).get("title", "No title"),
+                    "date_edited": doc_info.get(safe_file_path, {}).get("date_edited"),
+                    "edited_by": doc_info.get(safe_file_path, {}).get("edited_by", "system"),
+                    "doc_class": doc_info.get(safe_file_path, {}).get("doc_class", 3)
                 })
                 print(f"Warning: Could not properly set metadata for document: {str(e)}")
             
@@ -553,7 +613,7 @@ def sync_metadata(persist_directory: str, client: OpenAI | None, model: str, doc
         embeddings = OpenAIEmbeddingsWrapper(client, embedding_model)
 
         
-        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings) # type: ignore
         stored_data = vector_store.get()
     except Exception as e:
         print(f"❌ Failed to load vector store: {str(e)}")
@@ -567,7 +627,7 @@ def sync_metadata(persist_directory: str, client: OpenAI | None, model: str, doc
         print("❌ No stored documents found in vector store")
         return {"updated_chunks": 0, "missing_sources": [], "success": False}
 
-    field_names = ("title", "downloadable", "valid_from", "valid_to")
+    field_names = ("title", "downloadable", "valid_from", "valid_to", "edited_by", "date_edited", "doc_class")
     source_to_indexes = {}
     for n, metadata in enumerate(metadatas):
         if isinstance(metadata, dict) and metadata.get("source"):
@@ -636,7 +696,7 @@ def updateVectorStore(data_folder: str, persist_directory: str, client: OpenAI, 
     print("existing_sources: ", existing_sources)
     
     # Create vector store instance for adding new documents
-    vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+    vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings) # type: ignore
 
     new_docs = []
     for root, dirs, files in tqdm(os.walk(data_folder), desc="Checking for new documents"):
@@ -692,7 +752,7 @@ def create_unified_vector_store(original_data_folder: str, original_persist_dire
     
     # load validity file
     if os.path.exists(f"{original_persist_directory}/doc_list.json"):
-        doc_info = json.load(open(f"{original_persist_directory}/doc_list.json"))
+        doc_info = load_doc_list(f"{original_persist_directory}/doc_list.json")
     else:
         doc_info = {}
     
@@ -710,14 +770,18 @@ def create_unified_vector_store(original_data_folder: str, original_persist_dire
                                 doc.page_content = clean_text(doc.page_content)
                         # save validity information if available
                             if hasattr(doc, 'metadata'):
-                                doc_info.update(
+                                doc_info[doc.metadata["source"]] = _doc_list_entry_to_dict(
+                                    doc.metadata["source"],
                                     {
-                                        doc.metadata["source"]: {
-                                            "title": doc.metadata.get("title", "No title"),
-                                            "downloadable": doc.metadata.get("downloadable", False),
-                                            "valid_from": doc.metadata["valid_from"],
-                                            "valid_to": doc.metadata["valid_to"]}
-                                    })
+                                        "title": doc.metadata.get("title", "No title"),
+                                        "downloadable": doc.metadata.get("downloadable", False),
+                                        "valid_from": doc.metadata["valid_from"],
+                                        "valid_to": doc.metadata["valid_to"],
+                                        "date_edited": int(datetime.date.today().strftime("%Y%m%d")),
+                                        "edited_by": doc.metadata["edited_by"],
+                                        "doc_class": doc.metadata["doc_class"]
+                                    },
+                                )
                         all_docs.extend(docs)
                 except UnicodeDecodeError as e:
                     print(f"🔒 Skipping encrypted/corrupted file: {file_path}")
@@ -738,10 +802,10 @@ def create_unified_vector_store(original_data_folder: str, original_persist_dire
     
     print(f"Loaded {len(all_docs)} documents from all subfolders")
     
-    json.dump(doc_info, open(f"{original_persist_directory}/doc_list.json", "w"), indent=4)
+    save_doc_list(f"{original_persist_directory}/doc_list.json", doc_info)
     
     # Create unified vector store
-    vector_store = Chroma(embedding_function=embeddings, persist_directory=unified_persist_directory)
+    vector_store = Chroma(embedding_function=embeddings, persist_directory=unified_persist_directory) # type: ignore
 
     
     # Use a text splitter to break large documents into chunks
@@ -868,7 +932,7 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
     try:
             # load validity file
         if os.path.exists(f"{persist_directory}/doc_list.json"):
-            docs_info = json.load(open(f"{persist_directory}/doc_list.json"))
+            docs_info = load_doc_list(f"{persist_directory}/doc_list.json")
         else:
             docs_info = {}
         # Initialize OpenAI client
@@ -885,7 +949,7 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
             return None
         
         # Load existing vector store
-        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings) # type: ignore
         
         # Get existing sources to avoid duplicates
         existing_sources, metadata_count = check_vector_store_status(persist_directory, embeddings)
@@ -927,14 +991,18 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
                                                 print(f"⚠️ Could not fix encoding for {file_path}, skipping document: {str(e2)}")
                                                 continue
                                     if hasattr(doc, 'metadata'):
-                                        docs_info.update(
+                                        docs_info[doc.metadata["source"]] = _doc_list_entry_to_dict(
+                                            doc.metadata["source"],
                                             {
-                                                doc.metadata["source"]: {
-                                                    "valid_from": doc.metadata["valid_from"],
-                                                    "valid_to": doc.metadata["valid_to"],
-                                                    "title": doc.metadata.get("title", "No title"),
-                                                    "downloadable": doc.metadata.get("downloadable", False)}
-                                            })
+                                                "valid_from": doc.metadata["valid_from"],
+                                                "valid_to": doc.metadata["valid_to"],
+                                                "title": doc.metadata.get("title", "No title"),
+                                                "downloadable": doc.metadata.get("downloadable", False),
+                                                "date_edited": int(datetime.date.today().strftime("%Y%m%d")),
+                                                "edited_by": doc.metadata["edited_by"],
+                                                "doc_class": doc.metadata["doc_class"]
+                                            },
+                                        )
                                 new_docs.extend(docs)
                             else:
                                 print(f"⚠️ No documents loaded from {file_path} (file may be empty or corrupted)")
@@ -954,7 +1022,7 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
                         print(f"Document already exists: {file_path}")
         
         print(f"Write validity information to {persist_directory}/doc_list.json")
-        json.dump(docs_info, open(f"{persist_directory}/doc_list.json", "w"), indent=4)
+        save_doc_list(f"{persist_directory}/doc_list.json", docs_info)
         if failed_files:
             print(f"\n⚠️ Failed to process {len(failed_files)} file(s):")
             for file_path, error in failed_files:
@@ -1049,7 +1117,7 @@ def load_unified_vector_store(persist_directory: str = "kisski_db_v2"):
         # Try to load from main directory first
         if os.path.exists(persist_directory) and os.listdir(persist_directory):
             try:
-                vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+                vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings) # type: ignore
                 # Test if the vector store actually has data
                 test_results = vector_store.similarity_search("test", k=1)
                 print(f"✅ Loaded unified vector store from {persist_directory} (contains {len(test_results)}+ documents)")
@@ -1061,7 +1129,7 @@ def load_unified_vector_store(persist_directory: str = "kisski_db_v2"):
         unified_path = os.path.join(persist_directory, "unified")
         if os.path.exists(unified_path) and os.listdir(unified_path):
             try:
-                vector_store = Chroma(persist_directory=unified_path, embedding_function=embeddings)
+                vector_store = Chroma(persist_directory=unified_path, embedding_function=embeddings) # type: ignore
                 # Test if the vector store actually has data
                 test_results = vector_store.similarity_search("test", k=1)
                 print(f"✅ Loaded unified vector store from {unified_path} (contains {len(test_results)}+ documents)")
@@ -1118,7 +1186,7 @@ def smart_update_vector_store(main_directory: str, persist_directory: str = "kis
             return None
         
         # Load existing vector store
-        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings)
+        vector_store = Chroma(persist_directory=persist_directory, embedding_function=embeddings) # type: ignore
         
         # Get existing sources to avoid duplicates
         existing_sources, metadata_count = check_vector_store_status(persist_directory, embeddings)
@@ -1204,7 +1272,7 @@ def quick_search_test(persist_directory: str, query: str, k: int = 5, show_score
         return test_embeddings_search(persist_directory, embeddings, query, k)
 
 
-def create_doc_index_document_chunks(doc_info: dict, text_splitter):
+def create_doc_index_document_chunks(doc_info: dict[str, dict[str, Any]], text_splitter):
     """creates a document containing an index of all documents in the vector store, with their validity periods.
     
 
@@ -1231,7 +1299,9 @@ def create_doc_index_document_chunks(doc_info: dict, text_splitter):
             "valid_from": 15000101,
             "valid_to": 99991231,
             "downloadable": False,
-            "title": "Index der verfügbaren Dokumente"
+            "title": "Index der verfügbaren Dokumente",
+            "doc_class": "2",
+            "edited_by": "system",
         },
     )
     

@@ -15,7 +15,7 @@ Usage:
 import os
 import sys
 import argparse
-from rag.vector_store_management import (
+from src.rag.vector_store_management import (
     extend_existing_vector_store, 
     load_unified_vector_store, 
     check_vector_store_status,

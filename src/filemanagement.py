@@ -2,20 +2,24 @@ import streamlit as st
 import os
 import json
 import mimetypes
-from pswd import verify_password
-from rag.vector_store_management import (
+from src.pswd import verify_password
+from src.rag.vector_store_management import (
     extend_existing_vector_store, 
     check_vector_store_status, 
     OpenAIEmbeddingsWrapper,
     load_unified_vector_store,
+    load_doc_list,
+    save_doc_list,
     delete_document_from_vector_store,
     sync_metadata
 )
+from src.document_utils import DocListEntry, DOCUMENT_CLASSES, get_doc_class_info_text
 from pathlib import Path
 from langchain_community.vectorstores import Chroma
 import math
 from typing import List, Dict, Any
 import datetime
+
 
 
 class DatabaseFileExplorer:
@@ -41,7 +45,7 @@ class DatabaseFileExplorer:
         self.key_prefix = key_prefix
         self.items_per_page_options = items_per_page_options
         if os.path.exists(persist_directory):
-            self.docs_info = json.load(open(f"{self.persist_directory}/doc_list.json"))  # To store info for documents
+            self.docs_info = load_doc_list(f"{self.persist_directory}/doc_list.json")  # To store info for documents
         else:
             self.docs_info = {}
         
@@ -140,6 +144,11 @@ class DatabaseFileExplorer:
                 'full_path': data.get("__full_path__", ""),
                 'valid_from': self.docs_info.get(data.get("__full_path__", ""), {}).get("valid_from", 15000101) if not is_directory else None,
                 'valid_to': self.docs_info.get(data.get("__full_path__", ""), {}).get("valid_to", 99991231) if not is_directory else None,
+                'downloadable': self.docs_info.get(data.get("__full_path__", ""), {}).get("downloadable", False) if not is_directory else None,
+                'date_edited': self.docs_info.get(data.get("__full_path__", ""), {}).get("date_edited", None) if not is_directory else None,
+                'edited_by': self.docs_info.get(data.get("__full_path__", ""), {}).get("edited_by", None) if not is_directory else None,
+                'title': self.docs_info.get(data.get("__full_path__", ""), {}).get("title", "No title") if not is_directory else None,
+                'doc_class': self.docs_info.get(data.get("__full_path__", ""), {}).get("doc_class", "Unbekannt") if not is_directory else None
             })
         
         # Sort: folders first, then files, alphabetically
@@ -153,7 +162,7 @@ class DatabaseFileExplorer:
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size < 1024:
                 return f"{size:.1f} {unit}"
-            size /= 1024
+            size /= 1024 # type: ignore
         return f"{size:.1f} TB"
     
     def _get_current_path_display(self) -> str:
@@ -239,39 +248,70 @@ class DatabaseFileExplorer:
     def render(self):
         """Render the file explorer component."""
         # Custom styling
-        st.html("""
+        st.html(
+            """
             <style>
-                .st-key-db_file_explorer_container {
-                    padding: unset;
-                    gap: unset;
+                .st-key-db_explorer_file_explorer_container {
+                    padding: 1rem;
+                    gap: 2px;
                 }
-                .st-key-db_file_explorer_container .stButton button {
+                .st-key-db_explorer_file_explorer_container .stButton button {
                     padding: unset;
                     border: 0px;
                 }
-                .st-key-db_file_explorer_container .stButton button:active {
+                .st-key-db_explorer_file_explorer_container .stButton button:active {
                     padding: unset;
                     border: 0px;
                     background-color: unset;
                     color: unset;
                 }
-                .st-key-db_file_explorer_container hr {
-                    margin-top: 15px;
+                .st-key-db_explorer_file_explorer_container .stDownloadButton button {
+                    padding: unset;
+                    border: 0px;
                 }
-                .st-key-db_file_explorer_container [data-testid="stVerticalBlockBorderWrapper"] [data-testid="column"] {
-                    padding: 0rem 0.15rem;
+                .st-key-db_explorer_file_explorer_container .stDownloadButton button:active {
+                    padding: unset;
+                    border: 0px;
+                    background-color: unset;
+                    color: unset;
                 }
-                .st-key-db_file_explorer_container .file-actions-row {
-                    display: flex;
-                    gap: 0.25rem;
-                    align-items: center;
+                .st-key-db_explorer_file_explorer_container hr {
+                    margin-top: 2px;
                 }
-                .st-key-db_file_explorer_container .file-actions-row button {
-                    padding: 0.15rem 0.35rem;
-                    min-height: 1.8rem;
-                    height: 1.8rem;
+                .st-key-db_explorer_file_explorer_container [data-testid="stVerticalBlock"] > div {
+                    gap: 0.1rem !important;
+                }
+                .st-key-db_explorer_file_explorer_container [data-testid="stVerticalBlockBorderWrapper"] [data-testid="column"] {
+                    padding: 0rem 0.1rem;
+                }
+                .st-key-db_explorer_file_explorer_container [data-testid="stExpander"] {
+                    margin-bottom: 0.2rem;
+                }
+                .st-key-db_explorer_file_explorer_container .streamlit-expanderHeader {
+                    padding: 0.2rem 0.5rem;
+                    min-height: 0;
+                    margin: 0;
+                }
+                .st-key-db_explorer_file_explorer_container .streamlit-expanderContent {
+                    padding-top: 0.15rem;
+                    padding-bottom: 0.05rem;
+                }
+                .st-key-db_explorer_file_explorer_container .stButton {
+                    margin: 0;
+                }
+                .st-key-db_explorer_file_explorer_container .stButton > button,
+                .st-key-db_explorer_file_explorer_container .file-actions-row button {
+                    padding: 0.1rem 0.3rem;
+                    min-height: 2.2rem;
+                    height: 2.2rem;
                     line-height: 1;
-                    font-size: 0.85rem;
+                    font-size: 1rem;
+                    margin: 0;
+                }
+                .st-key-db_explorer_file_explorer_container .file-actions-row {
+                    display: flex;
+                    gap: 0.1rem;
+                    align-items: center;
                 }
             </style>
         """)
@@ -353,10 +393,10 @@ class DatabaseFileExplorer:
 
                 header = st.columns([7, 2, 2, 2, 3])
                 header[0].markdown("**Dateiname**")
-                header[1].markdown("**Größe**")
-                header[2].markdown("**Gültig von**")
-                header[3].markdown("**Gültig bis**")
-                header[4].markdown("**Aktionen**")
+                # header[1].markdown("**Größe**")
+                # header[2].markdown("**Gültig von**")
+                # header[3].markdown("**Gültig bis**")
+                # header[4].markdown("**Aktionen**")
 
                 st.divider()
                 
@@ -367,73 +407,45 @@ class DatabaseFileExplorer:
                     icon = "📁" if is_dir else self.file_icon(name)
 
                     col1, col2, col3, col4, col5 = st.columns([7, 2, 2, 2, 3], vertical_alignment="center")
+                    
+                    if is_dir:
+                        if st.button(f"{icon} {name}", key=f"open_{idx}"):
+                            st.session_state[self._get_state_key("current_path_parts")].append(name)
+                            st.session_state[self._get_state_key("current_page")] = 1
+                            st.rerun()
+                    else:
+                        with st.expander(f"{icon} {item.get('title', name)}", expanded=False, type="default") as doc_expander:
+                            with st.container() as doc_container:
+                                col1, col2 = st.columns([3, 1])
+                                with col1:
+                                    rows = [
+                                        ("Titel:", self.fmt(item.get("title", "No title"))),
+                                        ("Pfad:", item.get("full_path", "--")),
+                                        ("Dokumentklasse:", f"{item.get('doc_class', 'n.a.')}"),
+                                        ("Gültig von:", f"{datetime.datetime.strptime(str(item.get('valid_from', 15000101)), '%Y%m%d').strftime('%d.%m.%Y') if item.get('valid_from', 15000101) != 15000101 else '--'}"),
+                                        ("Gültig bis:", f"{datetime.datetime.strptime(str(item.get('valid_to', 99991231)), '%Y%m%d').strftime('%d.%m.%Y') if item.get('valid_to', 99991231) != 99991231 else '--'}"),
+                                        ("Herunterladbar:", "Ja" if item.get("downloadable", False) else "Nein"),
+                                        ("Zuletzt bearbeitet:", f"{datetime.datetime.strptime(str(item.get('date_edited')), '%Y%m%d').strftime('%d.%m.%Y') if item.get('date_edited') else 'Unbekannt'}"),
+                                        ("Bearbeitet von:", self.fmt(item.get("edited_by", "System"))),
+                                    ]
 
-                    # ---------- NAME / NAVIGATION ----------
-                    with col1:
-                        if is_dir:
-                            if st.button(f"{icon} {name}", key=f"open_{idx}"):
-                                st.session_state[self._get_state_key("current_path_parts")].append(name)
-                                st.session_state[self._get_state_key("current_page")] = 1
-                                st.rerun()
-                        else:
-                            st.write(f"{icon} {name}")
-
-                    # ---------- SIZE ----------
-                    with col2:
-                        if not is_dir:
-                            st.write(self._format_size(item["size"]))
-
-                    # ---------- VALID FROM ----------
-                    with col3:
-                        if not is_dir:
-                            valid_from = item.get("valid_from", 15000101)  # Default to a very old date if not set
-                            date_string = f"{datetime.datetime.strptime(str(valid_from), '%Y%m%d').strftime('%d.%m.%Y')}" if valid_from != 15000101 else "--"
-                            st.markdown(
-                                f"<div style='display:flex; align-items:center; justify-content:center; height:100%; font-size:0.8rem; line-height:1; margin:0; white-space:nowrap;'>{date_string}</div>",
-                                unsafe_allow_html=True,
-                            )
-
-                    # ---------- VALID TO ----------
-                    with col4:
-                        if not is_dir:
-                            valid_to = item.get("valid_to", 99991231)  # Default to a far future date if not set
-                            to_date_string = f"{datetime.datetime.strptime(str(valid_to), '%Y%m%d').strftime('%d.%m.%Y')}" if valid_to != 99991231 else "--"
-                            st.markdown(
-                                f"<div style='display:flex; align-items:center; justify-content:center; height:100%; font-size:0.8rem; line-height:1; margin:0; white-space:nowrap;'>{to_date_string}</div>",
-                                unsafe_allow_html=True,
-                            )
-
-                    # ---------- ACTIONS ----------
-                    with col5:
-                        if not is_dir:
-                            action_delete, action_download = st.columns([1, 1], vertical_alignment="center")
-
-                            with action_delete:
-                                if st.button("🗑️", key=f"del_{idx}", help="Löschen"):
-                                    st.session_state[self._get_state_key("delete_confirm_file")] = item["full_path"]
-                                    st.session_state[self._get_state_key("delete_confirm_name")] = name
-                                    st.rerun()
-
-                            with action_download:
-                                path = item.get("full_path")
-                                if path and os.path.isfile(path):
-                                    try:
-                                        with open(path, "rb") as f:
-                                            data = f.read()
-
-                                        mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
-
-                                        st.download_button(
-                                            "⬇️",
-                                            data=data,
-                                            file_name=os.path.basename(path),
-                                            mime=mime,
-                                            key=f"dl_{idx}"
-                                        )
-
-                                    except Exception:
-                                        st.caption("❌")
-
+                                    for label, value in rows:
+                                        c1, c2 = st.columns([2, 4])
+                                        with c1:
+                                            st.caption(f"**{label}**")
+                                        with c2:
+                                            st.caption(value)
+                                with col2:
+                                    
+                                    if item["name"] != "document_index":
+                                        if st.button("Bearbeiten", key=f"edit_{idx}", icon="✏️", help="Bearbeiten", disabled=True, width="stretch"):
+                                            st.warning("Bearbeiten ist derzeit deaktiviert.")
+                                        if st.button("Löschen", key=f"del_{idx}", icon="🗑️", help="Löschen", width="stretch"):
+                                            st.session_state[self._get_state_key("delete_confirm_file")] = item["full_path"]
+                                            st.session_state[self._get_state_key("delete_confirm_name")] = name
+                                            st.rerun()
+                                        if st.download_button("Herunterladen", icon="📥", key=f"dl_{idx}", disabled=True, data="test"):
+                                            st.toast("Download gestartet.", icon="📥")
             # Handle deletion confirmation
             if self._get_state_key('delete_confirm_file') in st.session_state:
                 file_to_delete = st.session_state[self._get_state_key('delete_confirm_file')]
@@ -497,7 +509,8 @@ class DatabaseFileExplorer:
 # add near top of file
 @st.fragment
 def _render_db_explorer_fragment(file_paths, client, persist_directory, embedding_model, skip_prefix, key_prefix):
-    with st.expander(f"📂 Datei-Explorer ({len(file_paths)} Dateien)", expanded=True):
+    with st.container(border=True, key=f"{key_prefix}file_explorer_fragment"):
+        st.markdown(f"📂 Datei-Explorer ({len(file_paths)} Dateien)")
         st.caption("💡 Die Ansicht zeigt Ordner ab 'drive_download_combined' + den 'uploads' Ordner")
         explorer = DatabaseFileExplorer(
             file_paths=file_paths,
@@ -664,6 +677,15 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
     
     st.divider()
     st.subheader("📤 Neue Dateien hochladen")
+
+    if "doc_list_editor" not in st.session_state:
+        st.session_state.doc_list_editor = "System"
+
+    st.session_state.doc_list_editor = st.text_input(
+        "Bearbeitet von",
+        value=st.session_state.doc_list_editor,
+        key="doc_list_editor_input",
+    ).strip() or "System"
     
     # Initialize file uploader key for clearing after upload
     if "file_uploader_key" not in st.session_state:
@@ -675,6 +697,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         accept_multiple_files=True,
         key=f"file_uploader_{st.session_state.file_uploader_key}"
     )
+    # st.session_state.uploaded_files = uploaded_files  # Store in session state for access in other parts
     
     if uploaded_files:
         # Show file preview
@@ -686,6 +709,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                 ## Dokumnt Upload Maske 
                 if "new_docs" not in st.session_state:
                     st.session_state.new_docs = {}
+                st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
                 
                 file_size = uploaded_file.size
                 st.markdown(f"📄 **{uploaded_file.name}** ({file_size:,} Bytes)")
@@ -693,7 +717,20 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                 doc_title = st.text_input("Geben Sie der Datei einen Namen", key=f"doc_name_{uploaded_file.name}")
                 if doc_title:
                     st.session_state.new_docs[uploaded_file.name]["title"] = doc_title if doc_title else uploaded_file.name
-                col1, col2, col3= st.columns([2, 2, 1])
+                
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    cls =st.segmented_control(
+                        "Dateiklasse", 
+                        DOCUMENT_CLASSES.keys(), 
+                        key=f"doc_class_{uploaded_file.name}", 
+                        help=f"Wählen Sie die passende Kategorie für die Datei aus. \n{get_doc_class_info_text()}")
+                    st.session_state.new_docs[uploaded_file.name]["doc_class"] = DOCUMENT_CLASSES.get(cls)
+                with c2:
+                    #Downloadable
+                    downloadable = st.checkbox("Datei ist für den Download verfügbar", value=False, key=f"downloadable_{uploaded_file.name}")
+                    st.session_state.new_docs[uploaded_file.name]["downloadable"] = downloadable
+                col1, col2, = st.columns([1, 1])
                 with col1:
                     #valid From
                     valid_from = st.date_input(
@@ -701,7 +738,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         value=None,
                         key=f"valid_from_{uploaded_file.name}",
                         format="DD.MM.YYYY")
-                    valid_from_int = int(valid_from.strftime("%Y%m%d")) if valid_from else 0
+                    valid_from_int = int(valid_from.strftime("%Y%m%d")) if valid_from else 15000101
                     st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
                     st.session_state.new_docs[uploaded_file.name]["valid_from"] = valid_from_int
                 with col2:
@@ -715,10 +752,6 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                     st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
                     st.session_state.new_docs[uploaded_file.name]["valid_to"] = valid_to_int
                     
-                with col3:
-                    #Downloadable
-                    downloadable = st.checkbox("Kann heruntergeladen werden ", value=False, key=f"downloadable_{uploaded_file.name}")
-                    st.session_state.new_docs[uploaded_file.name]["downloadable"] = downloadable
                 # Validation
                 if valid_from and valid_to and valid_from > valid_to:
                     st.error("'Gültig ab' darf nicht nach 'Gültig bis' liegen.")
@@ -743,6 +776,9 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                 if not st.session_state.new_docs[uploaded_file.name].get("title"):
                     st.error(f"❌ Bitte geben Sie einen Titel für die Datei '{uploaded_file.name}' ein.")
                     return
+                if not st.session_state.new_docs[uploaded_file.name].get("doc_class"):
+                    st.error(f"❌ Bitte wählen Sie eine Dokumentklasse für die Datei '{uploaded_file.name}' aus.")
+                    return
             
             
             uploads_dir = "uploads"
@@ -753,7 +789,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
             # load Doc_info file
             if "docs_info" not in st.session_state:
                 if os.path.exists(f"{persist_directory}/doc_list.json"):
-                    docs_info = json.load(open(f"{persist_directory}/doc_list.json"))
+                    docs_info = load_doc_list(f"{persist_directory}/doc_list.json")
                 else:
                     docs_info = {}
                 st.session_state.docs_info = docs_info                
@@ -785,19 +821,32 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                         progress = int(idx * 50 / len(uploaded_files))  # 0-50%
                         progress_bar.progress(progress)
                         
-                        # Add new file to doc_list.json with metadata
+                        # Add new file to doc_list.json with validated metadata
+                        entry = DocListEntry.from_doc_list_item(
+                            file_path,
+                            {
+                                "title": st.session_state.new_docs[uploaded_file.name].get("title", uploaded_file.name),
+                                "valid_from": st.session_state.new_docs[uploaded_file.name].get("valid_from"),
+                                "valid_to": st.session_state.new_docs[uploaded_file.name].get("valid_to"),
+                                "doc_class": st.session_state.new_docs[uploaded_file.name].get("doc_class"),
+                                "downloadable": st.session_state.new_docs[uploaded_file.name].get("downloadable"),
+                                "date_edited": int(datetime.date.today().strftime("%Y%m%d")),
+                                "edited_by": st.session_state.doc_list_editor,
+                            },
+                        )
+                        entry_dump = entry.model_dump() if hasattr(entry, "model_dump") else entry.dict()
                         st.session_state.docs_info[file_path] = {
-                            "title": st.session_state.new_docs[uploaded_file.name].get("title", uploaded_file.name),
-                            "valid_from": st.session_state.new_docs[uploaded_file.name].get("valid_from"),
-                            "valid_to": st.session_state.new_docs[uploaded_file.name].get("valid_to"),
-                            "downloadable": st.session_state.new_docs[uploaded_file.name].get("downloadable")}
+                            key: value for key, value in entry_dump.items() if key != "source"
+                        }
                         
                         # handle replace document option
                         if old_file := st.session_state.new_docs[uploaded_file.name].get("replace_document"):
                             existing_docs = {os.path.basename(doc.get("title", source)): source for source, doc in st.session_state.docs_info.items()}
                             st.session_state.docs_info[existing_docs[old_file]]["valid_to"] = st.session_state.new_docs[uploaded_file.name].get("valid_from") - 1
+                            st.session_state.docs_info[existing_docs[old_file]]["date_edited"] = int(datetime.date.today().strftime("%Y%m%d"))
+                            st.session_state.docs_info[existing_docs[old_file]]["edited_by"] = st.session_state.doc_list_editor
                             
-                    json.dump(st.session_state.docs_info, open(f"{persist_directory}/doc_list.json", "w"), indent=4)
+                    save_doc_list(f"{persist_directory}/doc_list.json", st.session_state.docs_info)
                     st.success(f"✅ {saved_count} Datei(en) erfolgreich gespeichert.")
                     
                     # Step 2: Add to vector store
