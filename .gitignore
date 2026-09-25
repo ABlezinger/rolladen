@@ -10,3 +10,8 @@ rsev_v2*
 
 .vscode
 uploads
+
+node_modules
+
+.lavish
+.agents

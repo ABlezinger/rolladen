@@ -1,4 +1,5 @@
 import streamlit as st
+import contextlib
 from openai import OpenAI
 import mimetypes
 import os
@@ -8,6 +9,7 @@ from src.rag.utils import extract_thinking, extract_code, execute_code
 from src.rag.llama_guard import check_safety_llama_guard_3
 from src.rag.tools import get_list_of_available_docs
 from src.document_utils import DOCUMENT_CLASSES, get_doc_class_info_text
+from src.llm_client import safe_completion, safe_stream_iter, LLMServiceError, LLM_UNAVAILABLE_MESSAGE
 
 def _get_stream_content(chunk):
     """Safely extract content string from a streaming chunk, or None if unavailable."""
@@ -205,229 +207,247 @@ def run_chatbot(vector_store, client, with_thinking=True):
         st.rerun()
             
         
-    # ===== Safety-Check =====
-    if st.session_state["rag_step"] == steps["wait_for_safety_check"]:
-        with st.status("🔒 Führe Sicherheitsüberprüfung durch...", expanded=True) as status: 
-            is_safe, explanation = check_safety_llama_guard_3(st.session_state["active_prompt"])
-            if not is_safe:
-                status.update(label="⚠️ Sicherheitswarnung", state="error")
-                st.error(explanation)
-                st.session_state.messages.append({
-                    "role": "assistant", 
-                    "content": explanation,
-                    "metadata": {}  # No thinking or docs for safety errors
-                })
-                st.stop()
-            st.session_state["rag_step"] = steps["planning"]
-            status.update(label="✅ Sicherheitsüberprüfung erfolgreich", state="complete")
-    elif st.session_state["rag_step"] >= steps["planning"]:
-        with st.status(label="✅ Sicherheitsüberprüfung erfolgreich", state="complete") as status:
-            pass
-    
-    
-    # ===== Planning Select Tools and Date Phase =====
-    if st.session_state["rag_step"] == steps["planning"]:
-        with st.status("📝 Plane das vorgehen...", expanded=True) as status:
-            
-            planning_prompt = st.session_state["planning_prompt"]
-            
-            print("MESSAGES:", st.session_state.messages)
-            
-            messages = [{"role": "system", "content": planning_prompt}] + st.session_state.messages
-            planning_messages = [message.copy() for message in messages if message["role"] != "assistant"]
+    # ===== Processing steps (safety check, planning, retrieval, date check, model init/thinking) =====
+    show_processing_steps = st.session_state["rag_step"] != steps["wait_for_input"]
+    steps_container = st.status("🔄 Verarbeitungsschritte anzeigen", expanded=True) if show_processing_steps else contextlib.nullcontext()
 
-            for message in planning_messages:
-                message.pop("metadata", None)            
-            # print("Planning Prompt:")
-            # print(planning_prompt)
-            # print("Messages:")
-            # print(messages)
-            # Call the API.
-            completion = client.chat.completions.create(
-                model=st.session_state["openai_model"],
-                messages=planning_messages,
-                max_tokens=16384,
-                temperature=0,
-                stream=False  # disable streaming
-            )
-            
-            print("Planning Messages:", planning_messages)
-            
-            answer = completion.choices[0].message.content
-            print("Planning Answer:", answer)
-            
-            print("STILL MESSAGES: ", st.session_state.messages)
-            try:
-                st.session_state.tool_match = re.search(r"<TOOL>(.*?)</TOOL>", answer).group(1)
-            except AttributeError:
-                st.session_state.tool_match = "SIMILARITY SEARCH"
-            try:
-                date_match = re.search(r"<DATE>(.*?)</DATE>", answer).group(1)
-                if date_match == "n.a.":
-                    st.session_state.relevant_date = None
-                else:
-                    st.session_state.relevant_date = datetime.strptime(date_match, "%Y-%m-%d")
-            except AttributeError:
-                st.session_state.relevant_date = None
-            
-            # print(answer)
-            
-            # Placeholder for planning logic
-            if st.session_state.relevant_date is None:
-                status.write("Kein relevantes Datum erkannt.")
-            else:
-                status.write(f"Relevantes Datum erkannt: {st.session_state.relevant_date.strftime('%d.%m.%Y')}")
-            status.write(f"Erkannter Tool-Einsatz: {st.session_state.tool_match}")
-            status.update(label=f"✅ Planung abgeschlossen", state="complete")
-            st.session_state["rag_step"] = steps["retrieval_execution"]
-    elif st.session_state["rag_step"] > steps["planning"]:
-        print("WARUM: " + str(st.session_state["rag_step"]))
-        with st.status(label=f"✅ Planung abgeschlossen", state="complete") as status:
-            pass
-        
-    if st.session_state["rag_step"] == steps["retrieval_execution"]:
-        # ===== Retrieve relevant context =====
-        with st.status("🔍 Suche relevante Informationen...", expanded=True) as status:
-            
-                print("prompt:", st.session_state["active_prompt"])
-                
-                # Tool: List Documents 
-                if st.session_state.tool_match == "LIST_DOCUMENTS":
-                    retreived_context = get_list_of_available_docs(vector_store)
-                    print("Debug: Retrieved context from LIST_DOCUMENTS:", retreived_context)
-                    status.update(label=f"✅ Relevante Informationen gefunden", state="complete")
-                
-                # Default tool: Similarity Search
-                else:
-                    try:
-                        if st.session_state.get("relevant_date") is not None:
-                            int_date = int(st.session_state["relevant_date"].strftime("%Y%m%d"))
-                            retrieved_docs = vector_store.similarity_search(
-                                st.session_state["active_prompt"], 
-                                k=5,
-                                filter={"$and": [
-                                    {"valid_from": {"$lte": int_date}}, 
-                                    {"valid_to": {"$gte": int_date}},
-                                    {"doc_class": {"$in": st.session_state["search_config"]["doc_classes"]}}]})
-                            print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state['active_prompt']}' with date filter: {int_date}")
-                        else:
-                            retrieved_docs = vector_store.similarity_search(
-                                st.session_state["active_prompt"], 
-                                k=5,
-                                filter={"doc_class": {"$in": st.session_state["search_config"]["doc_classes"]}})
-                            print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state['active_prompt']}'")
-                        
-                        if retrieved_docs:
-                            for i, doc in enumerate(retrieved_docs):
-                                print(f"Debug: Doc {i+1} - Folder: {doc.metadata.get('folder', 'Unknown')}, Source: {doc.metadata.get('source', 'Unknown')}")
-                                print(f"Debug: Content preview: {doc.page_content[:100]}...")
-                        else:
-                            print("Debug: No documents retrieved!")
-                        status.update(label=f"✅ Relevante Informationen gefunden", state="complete")
-                    except Exception as e:
-                        print(f"Debug: Error in similarity search: {str(e)}")
-                        retrieved_docs = []
-                        status.update(label="⚠️ Fehler bei der Suche nach relevanten Informationen", state="error")
-                    
-
-        # context = "\n\n".join([doc.page_content for doc in retrieved_docs]) if retrieved_docs else "Keine relevanten Dokumente gefunden."
-        
-        if retrieved_docs:
-            st.session_state.retrieved_docs = retrieved_docs
-        elif retreived_context:
-            st.session_state.retrieved_context = retreived_context
-        st.session_state["rag_step"] = steps["context_retrieved"]
-        
-        
-    elif st.session_state["rag_step"] > steps["context_retrieved"] and "retrieved_docs" in st.session_state:
-        with st.status(label="✅ Relevante Informationen gefunden", state="complete") as status:
-            pass
-        
-    # ===== Check for time relevant content =====
-    if st.session_state["rag_step"] == steps["context_retrieved"] and "retrieved_docs" in st.session_state:
-        # if no document is time relevant skip to answering
-        st.session_state["rag_step"] = steps["answering"] 
-        
-        print("HERER: " + str(st.session_state["relevant_date"]))
-        print("STEP: " + str(st.session_state["rag_step"]))
-        if st.session_state.get("relevant_date") is None:
-            for doc in st.session_state.retrieved_docs:
-                print("JAJAJA")
-                if doc.metadata["valid_from"] != 15000101 or doc.metadata["valid_to"] != 99991231:
-                    st.session_state["rag_step"] = steps["awaiting_date"]
-                    break
-            
-    if st.session_state["rag_step"] == steps["awaiting_date"]:
-        if "relevant_date" in st.session_state and st.session_state["relevant_date"] is not None:
-            st.session_state["rag_step"] = steps["date_received"]
-        else:
-            with st.status("Für einige der gefundenen Quellen sind Gültigkeitszeiträume hinterlegt. Welcher Zeitraum ist für deine Frage relevant?", expanded=True) as status:                
-                with st.form("timestamp_form"):
-                    timestamp = st.date_input(
-                        "Welcher Zeitpunkt ist für deine Frage relevant?",
-                        min_value=datetime(1900, 1, 1),
-                        format="DD.MM.YYYY",
-                    )   
-                    
-                    submitted = st.form_submit_button("Weiter")
-                    not_relevant = st.form_submit_button("Der Zeitpunkt ist nicht relevant")
-                if submitted:
-                    st.session_state["relevant_date"] = timestamp
-                    st.session_state["awaiting_date"] = False
-                    st.session_state["rag_step"] = steps["date_received"]
-                    st.session_state["new_query_needed"] = new_query_needed(st.session_state["relevant_date"], st.session_state.retrieved_docs)
-                    st.rerun()
-                elif not_relevant:
-                    st.session_state["relevant_date"] = None
-                    st.session_state["awaiting_date"] = False
-                    st.session_state["rag_step"] = steps["answering"]
-                    st.rerun()
-                else:
+    with steps_container:
+        # ===== Safety-Check =====
+        if st.session_state["rag_step"] == steps["wait_for_safety_check"]:
+            with st.status("🔒 Führe Sicherheitsüberprüfung durch...", expanded=True) as status: 
+                is_safe, explanation = check_safety_llama_guard_3(st.session_state["active_prompt"])
+                if not is_safe:
+                    status.update(label="⚠️ Sicherheitswarnung", state="error")
+                    st.error(explanation)
+                    st.session_state.messages.append({
+                        "role": "assistant", 
+                        "content": explanation,
+                        "metadata": {}  # No thinking or docs for safety errors
+                    })
                     st.stop()
-                
-                # st.session_state.relevant_date = timestamp
-                st.session_state["rag_step"] = steps["date_received"]
-
-                status.update(state="complete")
-                st.rerun()
-
-            # Continue only after submit
+                st.session_state["rag_step"] = steps["planning"]
+                status.update(label="✅ Sicherheitsüberprüfung erfolgreich", state="complete")
+        elif st.session_state["rag_step"] >= steps["planning"]:
+            with st.status(label="✅ Sicherheitsüberprüfung erfolgreich", state="complete") as status:
+                pass
+    
+    
+        # ===== Planning Select Tools and Date Phase =====
+        if st.session_state["rag_step"] == steps["planning"]:
+            with st.status("📝 Plane das vorgehen...", expanded=True) as status:
             
-    # ==== Answering the question with context =====
-    if st.session_state["rag_step"] >= steps["date_received"] and st.session_state["rag_step"] < steps["answering"]:
-        st.session_state["rag_step"] = steps["answering"]
-        
-        # Check if another time relevant query is necessary
-        if "relevant_date" not in st.session_state or st.session_state["relevant_date"] is None:
-            st.status("✅ Keine zeitlich relevanten Quellen gefunden", state="complete")
-        else:                        
-            with st.status(f"Überprüfe, ob die gefundenen Quellen für den Zeitpunkt {st.session_state['relevant_date']} relevant sind...", expanded=False) as status:
-                if st.session_state.get("new_query_needed", False):
-                    status.update(label=f"⚠️ Einige Quellen sind für den Zeitpunkt {st.session_state['relevant_date']} nicht relevant. Eine neue Suche wird durchgeführt...", state="running", expanded=False)
-                    int_date = int(st.session_state["relevant_date"].strftime("%Y%m%d"))
+                planning_prompt = st.session_state["planning_prompt"]
+            
+                print("MESSAGES:", st.session_state.messages)
+            
+                messages = [{"role": "system", "content": planning_prompt}] + st.session_state.messages
+                planning_messages = [message.copy() for message in messages if message["role"] != "assistant"]
 
-                    try:
-                        retrieved_docs = vector_store.similarity_search(
-                            st.session_state["active_prompt"], 
-                            k=5,
-                            filter={"$and": [{"valid_from": {"$lte": int_date}}, {"valid_to": {"$gte": int_date}}]})
-                        print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state['active_prompt']}' with date filter: {int_date}")
-                        
-                        if retrieved_docs:
-                            for i, doc in enumerate(retrieved_docs):
-                                print(f"Debug: Doc {i+1} - Folder: {doc.metadata.get('folder', 'Unknown')}, Source: {doc.metadata.get('source', 'Unknown')}")
-                                print(f"Debug: Content preview: {doc.page_content[:100]}...")
-                        else:
-                            print("Debug: No documents retrieved!")
-                            
-                        status.update(label=f"✅ Neue zetilich passende Informationen gefunden", state="complete", expanded=False)
-                    except Exception as e:
-                        print(f"Debug: Error in similarity search: {str(e)}")
-                        retrieved_docs = []
-                        status.update(label="⚠️ Fehler bei der Suche nach relevanten Informationen", state="error", expanded=False)
-                    st.session_state.retrieved_docs = retrieved_docs
+                for message in planning_messages:
+                    message.pop("metadata", None)            
+                # print("Planning Prompt:")
+                # print(planning_prompt)
+                # print("Messages:")
+                # print(messages)
+                # Call the API.
+                try:
+                    completion = safe_completion(
+                        client,
+                        model=st.session_state["kisski_model"],
+                        messages=planning_messages,
+                        max_tokens=16384,
+                        temperature=0,
+                        stream=False  # disable streaming
+                    )
+                except LLMServiceError:
+                    st.error(LLM_UNAVAILABLE_MESSAGE)
+                    st.stop()
+
+                print("Planning Messages:", planning_messages)
+            
+                answer = completion.choices[0].message.content
+                print("Planning Answer:", answer)
+            
+                print("STILL MESSAGES: ", st.session_state.messages)
+                try:
+                    st.session_state.tool_match = re.search(r"<TOOL>(.*?)</TOOL>", answer).group(1)
+                except AttributeError:
+                    st.session_state.tool_match = "SIMILARITY SEARCH"
+                try:
+                    date_match = re.search(r"<DATE>(.*?)</DATE>", answer).group(1)
+                    if date_match == "n.a.":
+                        st.session_state.relevant_date = None
+                    else:
+                        st.session_state.relevant_date = datetime.strptime(date_match, "%Y-%m-%d")
+                except AttributeError:
+                    st.session_state.relevant_date = None
+            
+                # print(answer)
+            
+                # Placeholder for planning logic
+                if st.session_state.relevant_date is None:
+                    status.write("Kein relevantes Datum erkannt.")
                 else:
-                    status.update(label=f"✅ Bereits gefundene Dokumente sind für den relevanten Zeitraum gültig", state="complete", expanded=False)
+                    status.write(f"Relevantes Datum erkannt: {st.session_state.relevant_date.strftime('%d.%m.%Y')}")
+                status.write(f"Erkannter Tool-Einsatz: {st.session_state.tool_match}")
+                status.update(label=f"✅ Planung abgeschlossen", state="complete")
+                st.session_state["rag_step"] = steps["retrieval_execution"]
+        elif st.session_state["rag_step"] > steps["planning"]:
+            print("WARUM: " + str(st.session_state["rag_step"]))
+            with st.status(label=f"✅ Planung abgeschlossen", state="complete") as status:
+                pass
+        
+        if st.session_state["rag_step"] == steps["retrieval_execution"]:
+            # ===== Retrieve relevant context =====
+            with st.status("🔍 Suche relevante Informationen...", expanded=True) as status:
+            
+                    print("prompt:", st.session_state["active_prompt"])
+                
+                    # Tool: List Documents 
+                    if st.session_state.tool_match == "LIST_DOCUMENTS":
+                        retreived_context = get_list_of_available_docs(vector_store)
+                        print("Debug: Retrieved context from LIST_DOCUMENTS:", retreived_context)
+                        status.update(label=f"✅ Relevante Informationen gefunden", state="complete")
+                
+                    # Default tool: Similarity Search
+                    else:
+                        try:
+                            if st.session_state.get("relevant_date") is not None:
+                                int_date = int(st.session_state["relevant_date"].strftime("%Y%m%d"))
+                                retrieved_docs = vector_store.similarity_search(
+                                    st.session_state["active_prompt"], 
+                                    k=5,
+                                    filter={"$and": [
+                                        {"valid_from": {"$lte": int_date}}, 
+                                        {"valid_to": {"$gte": int_date}},
+                                        {"doc_class": {"$in": st.session_state["search_config"]["doc_classes"]}}]})
+                                print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state['active_prompt']}' with date filter: {int_date}")
+                            else:
+                                retrieved_docs = vector_store.similarity_search(
+                                    st.session_state["active_prompt"], 
+                                    k=5,
+                                    filter={"doc_class": {"$in": st.session_state["search_config"]["doc_classes"]}})
+                                print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state['active_prompt']}'")
+                        
+                            if retrieved_docs:
+                                for i, doc in enumerate(retrieved_docs):
+                                    print(f"Debug: Doc {i+1} - Folder: {doc.metadata.get('folder', 'Unknown')}, Source: {doc.metadata.get('source', 'Unknown')}")
+                                    print(f"Debug: Content preview: {doc.page_content[:100]}...")
+                            else:
+                                print("Debug: No documents retrieved!")
+                            status.update(label=f"✅ Relevante Informationen gefunden", state="complete")
+                        except LLMServiceError:
+                            status.update(label="⚠️ Server nicht erreichbar", state="error")
+                            st.error(LLM_UNAVAILABLE_MESSAGE)
+                            st.stop()
+                        except Exception as e:
+                            print(f"Debug: Error in similarity search: {str(e)}")
+                            retrieved_docs = []
+                            status.update(label="⚠️ Fehler bei der Suche nach relevanten Informationen", state="error")
+
+
+            # context = "\n\n".join([doc.page_content for doc in retrieved_docs]) if retrieved_docs else "Keine relevanten Dokumente gefunden."
+        
+            if retrieved_docs:
+                st.session_state.retrieved_docs = retrieved_docs
+            elif retreived_context:
+                st.session_state.retrieved_context = retreived_context
+            st.session_state["rag_step"] = steps["context_retrieved"]
+        
+        
+        elif st.session_state["rag_step"] > steps["context_retrieved"] and "retrieved_docs" in st.session_state:
+            with st.status(label="✅ Relevante Informationen gefunden", state="complete") as status:
+                pass
+        
+        # ===== Check for time relevant content =====
+        if st.session_state["rag_step"] == steps["context_retrieved"] and "retrieved_docs" in st.session_state:
+            # if no document is time relevant skip to answering
+            st.session_state["rag_step"] = steps["answering"] 
+        
+            print("HERER: " + str(st.session_state["relevant_date"]))
+            print("STEP: " + str(st.session_state["rag_step"]))
+            if st.session_state.get("relevant_date") is None:
+                for doc in st.session_state.retrieved_docs:
+                    print("JAJAJA")
+                    if doc.metadata["valid_from"] != 15000101 or doc.metadata["valid_to"] != 99991231:
+                        st.session_state["rag_step"] = steps["awaiting_date"]
+                        break
+            
+        if st.session_state["rag_step"] == steps["awaiting_date"]:
+            if "relevant_date" in st.session_state and st.session_state["relevant_date"] is not None:
+                st.session_state["rag_step"] = steps["date_received"]
+            else:
+                with st.status("Für einige der gefundenen Quellen sind Gültigkeitszeiträume hinterlegt. Welcher Zeitraum ist für deine Frage relevant?", expanded=True) as status:                
+                    with st.form("timestamp_form"):
+                        timestamp = st.date_input(
+                            "Welcher Zeitpunkt ist für deine Frage relevant?",
+                            min_value=datetime(1900, 1, 1),
+                            format="DD.MM.YYYY",
+                        )   
+                    
+                        submitted = st.form_submit_button("Weiter")
+                        not_relevant = st.form_submit_button("Der Zeitpunkt ist nicht relevant")
+                    if submitted:
+                        st.session_state["relevant_date"] = timestamp
+                        st.session_state["awaiting_date"] = False
+                        st.session_state["rag_step"] = steps["date_received"]
+                        st.session_state["new_query_needed"] = new_query_needed(st.session_state["relevant_date"], st.session_state.retrieved_docs)
+                        st.rerun()
+                    elif not_relevant:
+                        st.session_state["relevant_date"] = None
+                        st.session_state["awaiting_date"] = False
+                        st.session_state["rag_step"] = steps["answering"]
+                        st.rerun()
+                    else:
+                        st.stop()
+                
+                    # st.session_state.relevant_date = timestamp
+                    st.session_state["rag_step"] = steps["date_received"]
+
+                    status.update(state="complete")
+                    st.rerun()
+
+                # Continue only after submit
+            
+        # ==== Answering the question with context =====
+        if st.session_state["rag_step"] >= steps["date_received"] and st.session_state["rag_step"] < steps["answering"]:
+            st.session_state["rag_step"] = steps["answering"]
+        
+            # Check if another time relevant query is necessary
+            if "relevant_date" not in st.session_state or st.session_state["relevant_date"] is None:
+                st.status("✅ Keine zeitlich relevanten Quellen gefunden", state="complete")
+            else:                        
+                with st.status(f"Überprüfe, ob die gefundenen Quellen für den Zeitpunkt {st.session_state['relevant_date']} relevant sind...", expanded=False) as status:
+                    if st.session_state.get("new_query_needed", False):
+                        status.update(label=f"⚠️ Einige Quellen sind für den Zeitpunkt {st.session_state['relevant_date']} nicht relevant. Eine neue Suche wird durchgeführt...", state="running", expanded=False)
+                        int_date = int(st.session_state["relevant_date"].strftime("%Y%m%d"))
+
+                        try:
+                            retrieved_docs = vector_store.similarity_search(
+                                st.session_state["active_prompt"], 
+                                k=5,
+                                filter={"$and": [{"valid_from": {"$lte": int_date}}, {"valid_to": {"$gte": int_date}}]})
+                            print(f"Debug: Retrieved {len(retrieved_docs)} documents for query: '{st.session_state['active_prompt']}' with date filter: {int_date}")
+                        
+                            if retrieved_docs:
+                                for i, doc in enumerate(retrieved_docs):
+                                    print(f"Debug: Doc {i+1} - Folder: {doc.metadata.get('folder', 'Unknown')}, Source: {doc.metadata.get('source', 'Unknown')}")
+                                    print(f"Debug: Content preview: {doc.page_content[:100]}...")
+                            else:
+                                print("Debug: No documents retrieved!")
+                            
+                            status.update(label=f"✅ Neue zetilich passende Informationen gefunden", state="complete", expanded=False)
+                        except LLMServiceError:
+                            status.update(label="⚠️ Server nicht erreichbar", state="error", expanded=False)
+                            st.error(LLM_UNAVAILABLE_MESSAGE)
+                            st.stop()
+                        except Exception as e:
+                            print(f"Debug: Error in similarity search: {str(e)}")
+                            retrieved_docs = []
+                            status.update(label="⚠️ Fehler bei der Suche nach relevanten Informationen", state="error", expanded=False)
+                        st.session_state.retrieved_docs = retrieved_docs
+                    else:
+                        status.update(label=f"✅ Bereits gefundene Dokumente sind für den relevanten Zeitraum gültig", state="complete", expanded=False)
             
         
     # ===== Build an augmented system prompt from the base prompt and the newly retrieved context. =====
@@ -440,96 +460,109 @@ def run_chatbot(vector_store, client, with_thinking=True):
                     st.session_state["retrieved_docs"]) else "Keine relevanten Dokumente gefunden."
         elif "retrieved_context" in st.session_state:
             context = st.session_state["retrieved_context"]
-        with st.status("🔍 Initialisiert das Modell...", expanded=True) as status:
-            system_prompt_with_context = (
-                st.session_state["base_system_prompt"] +
-                "\n\n=== Kontext aus Dokumenten ===\n" +
-                context +
-                "\n=== Ende Kontext ===\n"
-                "\n Relevantes Datum: " + (st.session_state.get("relevant_date").strftime("%d.%m.%Y") if st.session_state.get("relevant_date") else "--")
-            )
+        try:
+            if show_processing_steps:
+                steps_container.update(state="running", expanded=True)
+            with steps_container:
+                with st.status("🔍 Initialisiert das Modell...", expanded=True) as status:
+                    system_prompt_with_context = (
+                        st.session_state["base_system_prompt"] +
+                        "\n\n=== Kontext aus Dokumenten ===\n" +
+                        context +
+                        "\n=== Ende Kontext ===\n"
+                        "\n Relevantes Datum: " + (st.session_state.get("relevant_date").strftime("%d.%m.%Y") if st.session_state.get("relevant_date") else "--")
+                    )
 
-            
-            
-            # Build the messages list using the augmented prompt.
-            messages = [{"role": "system", "content": system_prompt_with_context}] + st.session_state.messages
-            # =============================================================
-            # print("CALLING API WITH MESSAGES:")
-            # print(messages)
-            # Call the API.
-            completion = client.chat.completions.create(
-                model=st.session_state["openai_model"],
-                messages=messages,
-                max_tokens=16384,
-                temperature=0.6,
-                stream=True  # Enable streaming
-            )
+                
+                
+                    # Build the messages list using the augmented prompt.
+                    messages = [{"role": "system", "content": system_prompt_with_context}] + st.session_state.messages
+                    # =============================================================
+                    # print("CALLING API WITH MESSAGES:")
+                    # print(messages)
+                    # Call the API.
+                    completion = safe_completion(
+                        client,
+                        model=st.session_state["kisski_model"],
+                        messages=messages,
+                        max_tokens=16384,
+                        temperature=0.6,
+                        stream=True  # Enable streaming
+                    )
+                    completion = safe_stream_iter(completion)
 
-            # print("Query:", system_prompt_with_context)
+                    # print("Query:", system_prompt_with_context)
 
-            # Initialize variables to collect the full response
-            full_response = ""
-            thinking_text = ""
-            in_thinking_block = True
-            status.update(label="✅ Modell initialisiert", state="complete")
-
-        with st.status("🤔 Denkt nach...", expanded=False) as status:
-            # Get the first chunk to check if thinking starts immediately
-            try:
-                first_chunk = next(completion)
-            except StopIteration:
-                first_chunk = None
-            # That chunk can be empty (apparently?!)
-            while first_chunk is not None and (_get_stream_content(first_chunk) is None or _get_stream_content(first_chunk) == ''):
-                try:
-                    first_chunk = next(completion)
-                except StopIteration:
-                    first_chunk = None
-                    break
-            first_content = _get_stream_content(first_chunk) if first_chunk is not None else None
-            if first_content is not None:
-                if first_content.startswith("<think>"):
-                    # Thinking starts immediately
-                    thinking_text += first_content
+                    # Initialize variables to collect the full response
+                    full_response = ""
+                    thinking_text = ""
                     in_thinking_block = True
-                else:
-                    # No thinking tag in first chunk
-                    in_thinking_block = False
-                    full_response += first_content
-            
-            # Process remaining chunks
+                    status.update(label="✅ Modell initialisiert", state="complete")
+
+                with st.status("🤔 Denkt nach...", expanded=False) as status:
+                    # Get the first chunk to check if thinking starts immediately
+                    try:
+                        first_chunk = next(completion)
+                    except StopIteration:
+                        first_chunk = None
+                    # That chunk can be empty (apparently?!)
+                    while first_chunk is not None and (_get_stream_content(first_chunk) is None or _get_stream_content(first_chunk) == ''):
+                        try:
+                            first_chunk = next(completion)
+                        except StopIteration:
+                            first_chunk = None
+                            break
+                    first_content = _get_stream_content(first_chunk) if first_chunk is not None else None
+                    if first_content is not None:
+                        if first_content.startswith("<think>"):
+                            # Thinking starts immediately
+                            thinking_text += first_content
+                            in_thinking_block = True
+                        else:
+                            # No thinking tag in first chunk
+                            in_thinking_block = False
+                            full_response += first_content
+                
+                    # Process remaining chunks
+                    for chunk in completion:
+                        content = _get_stream_content(chunk)
+                        if content is not None:
+                        
+                            # Handle thinking block
+                            if "</think>" in content:
+                                thinking_text += content
+                                in_thinking_block = False
+                                status.update(label="✅ Gedankengang erstellt", state="complete")
+                                break
+                            elif in_thinking_block:
+                                thinking_text += content
+                                continue
+                            else:
+                                full_response += content
+
+            # Continue processing remaining chunks outside of status block
+
+            current_message = st.chat_message("assistant")
+            message_placeholder = current_message.empty()
+
+            # Create expanders before the message
+            thinking_expander = st.expander("Gedankengang anzeigen")
+
             for chunk in completion:
                 content = _get_stream_content(chunk)
                 if content is not None:
-                    
-                    # Handle thinking block
-                    if "</think>" in content:
-                        thinking_text += content
-                        in_thinking_block = False
-                        status.update(label="✅ Gedankengang erstellt", state="complete")
-                        break
-                    elif in_thinking_block:
-                        thinking_text += content
-                        continue
-                    else:
-                        full_response += content
+                    full_response += content
+                    message_placeholder.markdown(full_response + "▌")
 
-        # Continue processing remaining chunks outside of status block
+            # Remove the cursor after completion
+            message_placeholder.markdown(full_response)
 
-        current_message = st.chat_message("assistant")
-        message_placeholder = current_message.empty()
-
-        # Create expanders before the message
-        # thinking_expander = st.expander("Gedankengang anzeigen")
-
-        for chunk in completion:
-            content = _get_stream_content(chunk)
-            if content is not None:
-                full_response += content
-                message_placeholder.markdown(full_response + "▌")
-
-        # Remove the cursor after completion
-        message_placeholder.markdown(full_response)
+            # Collapse the RAG-steps container now that the response is displayed.
+            if show_processing_steps:
+                steps_container.update(state="complete", expanded=False)
+        except LLMServiceError:
+            st.error(LLM_UNAVAILABLE_MESSAGE)
+            st.stop()
 
         assistant_response = full_response
         code = extract_code(assistant_response)
@@ -553,42 +586,48 @@ def run_chatbot(vector_store, client, with_thinking=True):
             )
             
             # Handle follow-up response with streaming as well
-            follow_up_completion = client.chat.completions.create(
-                model=st.session_state["openai_model"],
-                messages=follow_up_messages,
-                stream=True,
-            )
+            try:
+                follow_up_completion = safe_completion(
+                    client,
+                    model=st.session_state["kisski_model"],
+                    messages=follow_up_messages,
+                    stream=True,
+                )
+                follow_up_completion = safe_stream_iter(follow_up_completion)
 
-            # Initialize variables for follow-up response
-            follow_up_response = ""
-            follow_up_thinking_text = ""
-            in_follow_up_thinking_block = True
-            follow_up_message = st.chat_message("assistant")
-            follow_up_placeholder = follow_up_message.empty()
+                # Initialize variables for follow-up response
+                follow_up_response = ""
+                follow_up_thinking_text = ""
+                in_follow_up_thinking_block = True
+                follow_up_message = st.chat_message("assistant")
+                follow_up_placeholder = follow_up_message.empty()
 
-            # Process the streamed follow-up response
-            for chunk in follow_up_completion:
-                content = _get_stream_content(chunk)
-                if content is not None:
-                    
-                    # Handle thinking block
-                    if "</think>" in content:
-                        follow_up_thinking_text += content
-                        in_follow_up_thinking_block = False
-                        follow_up_placeholder.markdown("")  # Clear the thinking indicator
-                        continue
-                    elif in_follow_up_thinking_block:
-                        follow_up_thinking_text += content
-                        # Show thinking animation
-                        follow_up_placeholder.markdown("🤔 Denkt nach...")
-                        continue
-                    else:
-                        # Only update the message placeholder with non-thinking content
-                        follow_up_response += content
-                        follow_up_placeholder.markdown(follow_up_response + "▌")
+                # Process the streamed follow-up response
+                for chunk in follow_up_completion:
+                    content = _get_stream_content(chunk)
+                    if content is not None:
+                        
+                        # Handle thinking block
+                        if "</think>" in content:
+                            follow_up_thinking_text += content
+                            in_follow_up_thinking_block = False
+                            follow_up_placeholder.markdown("")  # Clear the thinking indicator
+                            continue
+                        elif in_follow_up_thinking_block:
+                            follow_up_thinking_text += content
+                            # Show thinking animation
+                            follow_up_placeholder.markdown("🤔 Denkt nach...")
+                            continue
+                        else:
+                            # Only update the message placeholder with non-thinking content
+                            follow_up_response += content
+                            follow_up_placeholder.markdown(follow_up_response + "▌")
 
-            # Remove the cursor after completion
-            follow_up_placeholder.markdown(follow_up_response)
+                # Remove the cursor after completion
+                follow_up_placeholder.markdown(follow_up_response)
+            except LLMServiceError:
+                st.error(LLM_UNAVAILABLE_MESSAGE)
+                st.stop()
             
             new_thought = extract_thinking(follow_up_response)
 

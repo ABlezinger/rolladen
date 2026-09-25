@@ -13,6 +13,7 @@ import datetime
 from typing import Any
 
 from src.document_utils import DocListEntry
+from src.llm_client import get_client, safe_embeddings_create
 
 def clean_text(text):
     """
@@ -80,7 +81,7 @@ class OpenAIEmbeddingsWrapper:
         """
         
         print(f"Embedding {len(texts)} documents using model '{self.model}'...")
-        response = self.client.embeddings.create(model=self.model, input=texts)
+        response = safe_embeddings_create(self.client, model=self.model, input=texts)
         return [item.embedding for item in response.data]
 
     def embed_query(self, text):
@@ -88,7 +89,7 @@ class OpenAIEmbeddingsWrapper:
         Accepts a single text string and returns its embedding vector.
         """
         # print(f"Embedding query using model '{self.model}'...")
-        response = self.client.embeddings.create(model=self.model, input=[text])
+        response = safe_embeddings_create(self.client, model=self.model, input=[text])
         # print("RESPONSE")
         
         # print(response)
@@ -605,7 +606,7 @@ def sync_metadata(persist_directory: str, client: OpenAI | None, model: str, doc
 
     try:
         if client is None:
-            client = OpenAI(
+            client = get_client(
                         base_url="https://chat-ai.academiccloud.de/v1",
                         api_key=st.secrets["KISSKI_API_KEY"]
                     )
@@ -860,7 +861,7 @@ def create_fresh_unified_vector_store(data_folder: str, persist_directory: str =
     
     try:
         # Initialize OpenAI client
-        client = OpenAI(
+        client = get_client(
             base_url="https://chat-ai.academiccloud.de/v1",
             api_key=st.secrets["KISSKI_API_KEY"]
         )
@@ -933,7 +934,7 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
         else:
             docs_info = {}
         # Initialize OpenAI client
-        client = OpenAI(
+        client = get_client(
             base_url="https://chat-ai.academiccloud.de/v1",
             api_key=st.secrets["KISSKI_API_KEY"]
         )
@@ -1104,7 +1105,7 @@ def load_unified_vector_store(persist_directory: str = "kisski_db_v2"):
         Chroma vector store instance or None if not found
     """
     try:
-        client = OpenAI(
+        client = get_client(
             base_url="https://chat-ai.academiccloud.de/v1",
             api_key=st.secrets["KISSKI_API_KEY"]
         )
@@ -1164,7 +1165,7 @@ def smart_update_vector_store(main_directory: str, persist_directory: str = "kis
     
     try:
         # Initialize OpenAI client
-        client = OpenAI(
+        client = get_client(
             base_url="https://chat-ai.academiccloud.de/v1",
             api_key=st.secrets["KISSKI_API_KEY"]
         )
@@ -1256,7 +1257,7 @@ def quick_search_test(persist_directory: str, query: str, k: int = 5, show_score
     Returns:
         List of retrieved documents (with or without scores)
     """
-    client = OpenAI(
+    client = get_client(
         base_url="https://chat-ai.academiccloud.de/v1",
         api_key=st.secrets["KISSKI_API_KEY"]
     )
@@ -1311,7 +1312,7 @@ def create_doc_index_document_chunks(doc_info: dict[str, dict[str, Any]], text_s
 
 
 if __name__ == "__main__":
-    client = OpenAI(
+    client = get_client(
         base_url="https://chat-ai.academiccloud.de/v1",
         api_key=st.secrets["KISSKI_API_KEY"]
     )

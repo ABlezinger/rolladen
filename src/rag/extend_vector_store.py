@@ -19,7 +19,7 @@ import os
 import sys
 import argparse
 from src.rag.vector_store_management import extend_existing_vector_store, load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
-from openai import OpenAI
+from src.llm_client import get_client
 import streamlit as st
 
 def main():
@@ -75,7 +75,7 @@ def main():
         if args.test:
             print("\n🧪 Testing updated vector store...")
             try:
-                client = OpenAI(
+                client = get_client(
                     base_url="https://chat-ai.academiccloud.de/v1",
                     api_key=st.secrets["KISSKI_API_KEY"]
                 )
@@ -139,7 +139,7 @@ def interactive_extend():
         if test_choice:
             print("\n🧪 Testing vector store...")
             try:
-                client = OpenAI(
+                client = get_client(
                     base_url="https://chat-ai.academiccloud.de/v1",
                     api_key=st.secrets["KISSKI_API_KEY"]
                 )

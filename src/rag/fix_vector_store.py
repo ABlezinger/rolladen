@@ -13,7 +13,7 @@ import os
 import shutil
 import sys
 from src.rag.vector_store_management import load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
-from openai import OpenAI
+from src.llm_client import get_client
 import streamlit as st
 
 def fix_vector_store():
@@ -79,7 +79,7 @@ def fix_vector_store():
     # Test the fixed vector store
     print(f"\n🧪 Testing fixed vector store...")
     try:
-        client = OpenAI(
+        client = get_client(
             base_url="https://chat-ai.academiccloud.de/v1",
             api_key=st.secrets["KISSKI_API_KEY"]
         )

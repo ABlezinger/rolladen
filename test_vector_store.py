@@ -7,7 +7,7 @@ Run this to check if your vector store can be loaded and searched.
 import os
 import sys
 from src.rag.vector_store_management import load_unified_vector_store, test_embeddings_search, OpenAIEmbeddingsWrapper
-from openai import OpenAI
+from src.llm_client import get_client
 import streamlit as st
 
 def test_vector_store():
@@ -55,7 +55,7 @@ def test_vector_store():
     # Test 3: Test with embeddings function directly
     print("\n3️⃣ Testing with embeddings function...")
     try:
-        client = OpenAI(
+        client = get_client(
             base_url="https://chat-ai.academiccloud.de/v1",
             api_key=st.secrets["KISSKI_API_KEY"]
         )

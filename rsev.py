@@ -1,10 +1,12 @@
-from openai import OpenAI
 import streamlit as st
 import os
 from src.rag.system_prompts import system_prompt
+from src.llm_client import get_client, LLMServiceError, LLM_UNAVAILABLE_MESSAGE
 
 from src.chatbot import run_chatbot
 from src.filemanagement import run_file_management
+from src.addons.file_chat import run_file_chat
+from src.handoff import require_login, logout
 
 st.set_page_config(page_title="R+S Auskunft", page_icon="assets/images/rsev_favicon.ico")
 st.title("R+S Auskunft – ein DAISEC-Projekt")
@@ -19,23 +21,41 @@ st.html("""
   </style>
         """)
 
+# --- Authentication ---
+
+user = require_login()
+
 # --- NAVIGATION ---
 st.sidebar.space("small")
+with st.sidebar:
+    st.write(f"Angemeldet als **{user.get('display_name') or user['sub']}**")
+    if user.get("role"):
+        st.caption(f"Rolle: {user['role']}")
+
+    if user.get("via") == "trusted_network":
+        # Shared network identity: a logout would be undone on the next rerun,
+        # so we don't offer one. Flag the reduced accountability instead.
+        st.caption("Zugang über vertrauenswürdiges Netz (keine persönliche Anmeldung).")
+    else:
+        if st.button("Abmelden"):
+            logout()
+            
+            
 st.sidebar.markdown("### 🧭 Navigation")
 page = st.sidebar.radio(
     "Modus wählen:",
-    ["💬 Chatbot", "📂 Datei-Upload"],
-    horizontal=True
+    ["💬 Chatbot", "📄 Dokument-Chat", "📂 Datei-Upload"],
+    horizontal=False
 )
 
-client = OpenAI(
-    base_url= st.secrets["base_url"],#"https://chat.daisec.eu/api",
+client = get_client(
+    base_url=st.secrets["base_url"],#"https://chat.daisec.eu/api",
     api_key=st.secrets["KISSKI_API_KEY"]#st.secrets["DAISEC_API_KEY"]
 )
 
 # Initialize model and conversation if they aren't already in session state.
-if "openai_model" not in st.session_state:
-    st.session_state["openai_model"] = st.secrets["model_id"] #"qwen3:30b" #"deepseek-r1:32b"
+if "kisski_model" not in st.session_state:
+    st.session_state["kisski_model"] = st.secrets["model_id"] #"qwen3:30b" #"deepseek-r1:32b"
 
 # Initialize the base system prompt and store it separately.
 if "base_system_prompt" not in st.session_state:
@@ -65,12 +85,12 @@ if "vector_stores" not in st.session_state:
             
             try:
                 # Create embeddings manually
-                openai_client = OpenAI(
+                openai_client = get_client(
                     api_key=st.secrets["KISSKI_API_KEY"],
                     base_url=st.secrets["base_url"]
                 )
                 embeddings = OpenAIEmbeddingsWrapper(openai_client, st.secrets["embedding_id"])
-                
+
                 # Try to load from main directory
                 if os.path.exists(persist_directory) and os.listdir(persist_directory):
                     st.session_state.vector_stores = Chroma(persist_directory=persist_directory, embedding_function=embeddings) # type: ignore
@@ -78,12 +98,18 @@ if "vector_stores" not in st.session_state:
                 else:
                     st.error("❌ No vector store found. Please run setup_vector_store.py first.")
                     st.stop()
-                    
+
+            except LLMServiceError:
+                st.error(LLM_UNAVAILABLE_MESSAGE)
+                st.stop()
             except Exception as e:
                 st.error(f"❌ Error loading vector store: {str(e)}")
                 st.error("Please run: python setup_vector_store.py")
                 st.stop()
-                
+
+    except LLMServiceError:
+        st.error(LLM_UNAVAILABLE_MESSAGE)
+        st.stop()
     except Exception as e:
         st.error(f"❌ Critical error initializing vector store: {str(e)}")
         st.stop()
@@ -93,6 +119,7 @@ vector_store = st.session_state.vector_stores
 
 if page == "📂 Datei-Upload":
     run_file_management(client, persist_directory=persist_directory, embedding_model=st.secrets["embedding_id"], skip_prefix=st.secrets["main_directory"])
-
+elif page == "📄 Dokument-Chat":
+    run_file_chat(vector_store, client)
 else:
     run_chatbot(vector_store, client)

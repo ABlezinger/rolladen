@@ -5,6 +5,7 @@ from src.rag.system_prompts import system_prompt
 from src.rag.llama_guard import check_safety_llama_guard_3
 from addons.pdf_generator import run_pdf_generator
 from addons.pdf_generator import run_pdf_download
+from src.llm_client import safe_completion, safe_stream_iter, LLMServiceError, LLM_UNAVAILABLE_MESSAGE
 
 def _get_stream_content(chunk):
     """Safely extract content string from a streaming chunk, or None if unavailable."""
@@ -153,6 +154,9 @@ def run_kompetenztest_generator(vector_store, client):
                         print("Debug: No documents retrieved for kompetenztest!")
                         
                     status.update(label=f"✅ Relevante Informationen gefunden", state="complete")
+                except LLMServiceError:
+                    status.update(label="⚠️ Server nicht erreichbar", state="error")
+                    raise
                 except Exception as e:
                     print(f"Debug: Error in kompetenztest similarity search: {str(e)}")
                     retrieved_docs = []
@@ -181,8 +185,10 @@ def run_kompetenztest_generator(vector_store, client):
                     themen_hinweis = f"\nIndividuelle Themen: {vorschlag.strip()}"
                 
                 # eigentlicher Request
-                completion = client.chat.completions.create(
-                    model="gemma-3-27b-it",#"gemma3:27b-it-q8_0",
+                model = st.session_state.get("kisski_model") or st.secrets.get("model_id")
+                completion = safe_completion(
+                    client,
+                    model=model,
                     messages=[
                         {"role": "system", "content": system_prompt_with_context},
                         {"role": "user", "content": f"""
@@ -202,6 +208,7 @@ def run_kompetenztest_generator(vector_store, client):
                     stream=True,
                     temperature=0.7 if niveau == "mittel" else 1.0 if niveau == "schwer" else 0.3
                 )
+                completion = safe_stream_iter(completion)
 
                 for chunk in completion:
                     content = _get_stream_content(chunk)
@@ -238,11 +245,16 @@ def run_kompetenztest_generator(vector_store, client):
             with st.expander("📘 Lösungen anzeigen", expanded=False):
                 st.markdown(loesung_content)
         
+        except LLMServiceError:
+            status_placeholder.error(LLM_UNAVAILABLE_MESSAGE)
         except Exception as e:
             status_placeholder.error(f"❌ Fehler: {str(e)}")
 
         # PDF-Generierung
-        pdf_bytes = run_pdf_generator(aufgaben_content, client)
-        run_pdf_download(pdf_bytes, selected_fach)
+        try:
+            pdf_bytes = run_pdf_generator(aufgaben_content, client)
+            run_pdf_download(pdf_bytes, selected_fach)
+        except LLMServiceError:
+            status_placeholder.error(LLM_UNAVAILABLE_MESSAGE)
 
     st.stop()  # Beendet die Ausführung hier
