@@ -12,3 +12,7 @@ rsev_v2*
 uploads
 
 doc_list.json
+node_modules
+
+.lavish
+.agents

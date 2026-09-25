@@ -23,7 +23,7 @@ from src.rag.vector_store_management import (
     load_document,
     clean_text
 )
-from openai import OpenAI
+from src.llm_client import get_client
 from tqdm import tqdm
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -54,7 +54,7 @@ def smart_extend_vector_store(main_directory: str, persist_directory: str = "kis
     
     try:
         # Initialize OpenAI client
-        client = OpenAI(
+        client = get_client(
             base_url="https://chat-ai.academiccloud.de/v1",
             api_key=st.secrets["KISSKI_API_KEY"]
         )
@@ -277,7 +277,7 @@ def main():
         if args.test and not args.dry_run:
             print("\n🧪 Testing updated vector store...")
             try:
-                client = OpenAI(
+                client = get_client(
                     base_url="https://chat-ai.academiccloud.de/v1",
                     api_key=st.secrets["KISSKI_API_KEY"]
                 )

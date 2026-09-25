@@ -306,7 +306,7 @@ def sync_vector_store_metadata_from_doc_list(vector_store_path: str):
 def refresh_document_index_only(vector_store_path: str):
     """Rebuild only the document index chunk(s) and store them in the vector store."""
     from langchain_community.vectorstores import Chroma
-    from openai import OpenAI
+    from src.llm_client import get_client
     import streamlit as st
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     from src.rag.vector_store_management import (
@@ -327,7 +327,7 @@ def refresh_document_index_only(vector_store_path: str):
         print(f"❌ doc_list.json not found: {doc_list_path}")
         return False
 
-    client = OpenAI(
+    client = get_client(
         base_url="https://chat-ai.academiccloud.de/v1",
         api_key=st.secrets["KISSKI_API_KEY"],
     )

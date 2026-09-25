@@ -1,17 +1,18 @@
 import streamlit as st
-from openai import OpenAI
+from src.llm_client import get_client, safe_completion, LLMServiceError
 
 def check_safety_llama_guard_3(text):
     """
     Checks the safety of the given text using the LlamaGuard-3 model.
     """
     try:
-        client = OpenAI(
+        client = get_client(
             base_url=st.secrets["daisec_url"],
             api_key=st.secrets["DAISEC_API_KEY"]
         )
 
-        response = client.chat.completions.create(
+        response = safe_completion(
+            client,
             model=st.secrets["safety_model"],
             messages=[{"role": "user", "content": text}],
             max_tokens=32000

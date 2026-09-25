@@ -1,3 +1,0 @@
-PROJEKTNAME = "RSEV_Chat"
-VECTOR_STORE_DIR = "rsev_v2"
-EMBEDDING_MODEL = "qwen3-embedding-4b"

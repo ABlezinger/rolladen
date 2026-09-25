@@ -1,17 +1,17 @@
-from openai import OpenAI
 import streamlit as st
 import re
 import io
 from contextlib import redirect_stdout
 import json
+from src.llm_client import get_client, safe_completion
 
 def rerank_chunks(query, retrieved_docs, reranker_model="phi4:14b"):
     """
     Uses a small model to determine which retrieved chunks best answer the query.
     Returns the top 2 most relevant chunks.
     """
-    client = OpenAI(
-        base_url="https://interweb.l3s.uni-hannover.de/v1",  
+    client = get_client(
+        base_url="https://interweb.l3s.uni-hannover.de/v1",
         api_key=st.secrets["INTERWEB_API_KEY"]
     )
 
@@ -40,7 +40,8 @@ def rerank_chunks(query, retrieved_docs, reranker_model="phi4:14b"):
     """
 
     # Call the small model for re-ranking
-    completion = client.chat.completions.create(
+    completion = safe_completion(
+        client,
         model=reranker_model,  # Use a small model like "mistral-7b" or "phi-2:2.7b"
         messages=[{"role": "user", "content": ranking_prompt}],
         stream=False,

@@ -1,9 +1,9 @@
 import streamlit as st
-from openai import OpenAI
 from src.rag.system_prompts import system_prompt
 from fpdf import FPDF
 from datetime import datetime
 import re
+from src.llm_client import safe_completion, safe_stream_iter, LLMServiceError, LLM_UNAVAILABLE_MESSAGE
 
 def _get_stream_content(chunk):
     """Safely extract content string from a streaming chunk, or None if unavailable."""
@@ -119,56 +119,69 @@ def run_pdf_generator(aufgaben_content, client):
         # Systemprompt erstellen
         syst_prompt = system_prompt(role="bbs_pdf_generator",)
 
+        model = st.session_state.get("kisski_model") or st.secrets.get("model_id")
+
         # API request for converting the raw exam text into a clean document format
-        response = client.chat.completions.create(
-            model="gemma-3-27b-it",#"gemma3:27b-it-q8_0",
-            messages=[
-                {"role": "system", "content": syst_prompt},
-                {"role": "user", "content": f"""
-                    Formatiere den folgenden Klausurtext für FPDF.
-                    Gib ausschließlich den reinen, formatierten Klausurtext zurück – ohne Einleitung, ohne Erklärung, ohne Anmerkungen, ohne Zwischenschritte.
-                    Entferne alle Lösungen.
-                    Gib nur den Text zurück, der direkt und ohne weitere Bearbeitung in die PDF eingefügt werden kann.
-                    Alles andere als das genannte ist ein Fehler.
-                    Textinhalt:
-                    {aufgaben_content}
+        try:
+            response = safe_completion(
+                client,
+                model=model,
+                messages=[
+                    {"role": "system", "content": syst_prompt},
+                    {"role": "user", "content": f"""
+                        Formatiere den folgenden Klausurtext für FPDF.
+                        Gib ausschließlich den reinen, formatierten Klausurtext zurück – ohne Einleitung, ohne Erklärung, ohne Anmerkungen, ohne Zwischenschritte.
+                        Entferne alle Lösungen.
+                        Gib nur den Text zurück, der direkt und ohne weitere Bearbeitung in die PDF eingefügt werden kann.
+                        Alles andere als das genannte ist ein Fehler.
+                        Textinhalt:
+                        {aufgaben_content}
                     
-                    Beachte:
-                    1. Verwende ## für Hauptüberschriften (zentriert, fett)
-                    2. Verwende ### für Unterüberschriften (linksbündig, fett)
-                    3. Aufgaben beginnen mit **Aufgabe X** (fett, unterstrichen)
-                    4. Punkte stehen in Klammern nach jeder Frage
-                    5. Lösungen vollständig entfernen
-                    6. Füge --- nach jeder Aufgabe als Trennlinie ein
-                    7. Gesamtpunktzahl am Ende deutlich angeben
-                    8. Konsistente Abstände: 5mm nach Überschriften, 3mm nach Aufgaben
-                    """
-                }
-            ],
-            stream=True,
-        )
+                        Beachte:
+                        1. Verwende ## für Hauptüberschriften (zentriert, fett)
+                        2. Verwende ### für Unterüberschriften (linksbündig, fett)
+                        3. Aufgaben beginnen mit **Aufgabe X** (fett, unterstrichen)
+                        4. Punkte stehen in Klammern nach jeder Frage
+                        5. Lösungen vollständig entfernen
+                        6. Füge --- nach jeder Aufgabe als Trennlinie ein
+                        7. Gesamtpunktzahl am Ende deutlich angeben
+                        8. Konsistente Abstände: 5mm nach Überschriften, 3mm nach Aufgaben
+                        """
+                    }
+                ],
+                stream=True,
+            )
+            response = safe_stream_iter(response)
 
-        # Collect streaming response, skipping hidden "thinking" sections
-        for chunk in response:
-            content = _get_stream_content(chunk)
-            if content is None or content == "":
-                continue
+            # Collect streaming response, skipping hidden "thinking" sections
+            for chunk in response:
+                content = _get_stream_content(chunk)
+                if content is None or content == "":
+                    continue
 
-            if "<think>" in content:
-                in_thinking_block = True
-                content = content.replace("<think>", "")
-            if "</think>" in content:
-                in_thinking_block = False
-                thinking_text += content.replace("</think>", "")
-                continue
+                if "<think>" in content:
+                    in_thinking_block = True
+                    content = content.replace("<think>", "")
+                if "</think>" in content:
+                    in_thinking_block = False
+                    thinking_text += content.replace("</think>", "")
+                    continue
 
-            if in_thinking_block:
-                thinking_text += content
-                continue 
+                if in_thinking_block:
+                    thinking_text += content
+                    continue 
 
-            # Append actual exam text
-            pdf_response += content
-        status.update(label="✅ PDF generiert", state="complete")
+                # Append actual exam text
+                pdf_response += content
+            status.update(label="✅ PDF generiert", state="complete")
+        except LLMServiceError:
+            status.update(label="⚠️ Server nicht erreichbar", state="error")
+            st.error(LLM_UNAVAILABLE_MESSAGE)
+            st.stop()
+        except Exception as e:
+            status.update(label="⚠️ Fehler bei der PDF-Generierung", state="error")
+            st.error(f"❌ Fehler bei der PDF-Generierung: {str(e)}")
+            st.stop()
 
     # --- Formatting Phase: Convert text into PDF structure ---
     with st.status("📄 PDF wird formatiert...", expanded=True) as status:
