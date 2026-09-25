@@ -309,7 +309,7 @@ def refresh_document_index_only(vector_store_path: str):
     from openai import OpenAI
     import streamlit as st
     from langchain_text_splitters import RecursiveCharacterTextSplitter
-    from rag.vector_store_management import (
+    from src.rag.vector_store_management import (
         OpenAIEmbeddingsWrapper,
         check_vector_store_status,
         create_doc_index_document_chunks,

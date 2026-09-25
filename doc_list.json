@@ -96,57 +96,87 @@
         "valid_to": 99991231
     },
     "uploads/RL Techn. Beratung, Verkauf u. Montage von Markisen.pdf": {
-        "title": "RL Techn. Beratung, Verkauf u. Montage von Markisen",
-        "downloadable": true,
         "valid_from": 20080101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "RL Techn. Beratung, Verkauf u. Montage von Markisen",
+        "downloadable": true
     },
     "uploads/RS_2026-01_ohne61kpl.pdf": {
-        "title": "RS_2026-01_ohne61kpl",
-        "downloadable": true,
         "valid_from": 20260101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "RS_2026-01_ohne61kpl",
+        "downloadable": true
     },
     "uploads/ASR-A1-7.pdf": {
-        "title": "ASR-A1-7",
-        "downloadable": true,
         "valid_from": 15000101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "ASR-A1-7",
+        "downloadable": true
     },
     "uploads/daisec_infos.docx": {
-        "title": "daisec_infos",
-        "downloadable": true,
         "valid_from": 15000101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "daisec_infos",
+        "downloadable": true
     },
     "uploads/IVRSA-Richtlinie Produkteigenschaften Raffstoren.pdf": {
-        "title": "IVRSA-Richtlinie Produkteigenschaften Raffstoren",
-        "downloadable": true,
         "valid_from": 15000101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "IVRSA-Richtlinie Produkteigenschaften Raffstoren",
+        "downloadable": true
     },
     "uploads/l3s_info.pdf": {
-        "title": "l3s_info",
-        "downloadable": true,
         "valid_from": 15000101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "l3s_info",
+        "downloadable": true
     },
     "uploads/DGUV A3 Elektrische Anlagen und Betriebsmittel.pdf": {
-        "title": "DGUV A3 Elektrische Anlagen und Betriebsmittel",
-        "downloadable": true,
         "valid_from": 15000101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "DGUV A3 Elektrische Anlagen und Betriebsmittel",
+        "downloadable": true
     },
     "uploads/DGUV Info 208-016 Leitern.pdf": {
-        "title": "DGUV Info 208-016 Leitern",
-        "downloadable": true,
         "valid_from": 15000101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "DGUV Info 208-016 Leitern",
+        "downloadable": true
     },
     "uploads/Richtlinie zur technischen Beratung, zum Verkauf und zur Montage von Gelenkarmmarkisen 2018.pdf": {
-        "title": "Richtlinie zur technischen Beratung, zum Verkauf und zur Montage von Gelenkarmmarkisen 2018",
-        "downloadable": true,
         "valid_from": 20180101,
-        "valid_to": 99991231
+        "valid_to": 99991231,
+        "title": "Richtlinie zur technischen Beratung, zum Verkauf und zur Montage von Gelenkarmmarkisen 2018",
+        "downloadable": true
+    },
+    "uploads/RL Techn. Beratung, Verkauf u. Montage von Markisen_1.pdf": {
+        "valid_from": 15000101,
+        "valid_to": 99991231,
+        "title": "RL Techn. Beratung, Verkauf u. Montage von Markisen.",
+        "downloadable": false
+    },
+    "uploads/Richtlinie zur technischen Beratung, zum Verkauf und zur Montage von Gelenkarmmarkisen 2018_1.pdf": {
+        "valid_from": 20180101,
+        "valid_to": 99991231,
+        "title": "Richtlinie zur technischen Beratung, zum Verkauf und zur Montage von Gelenkarmmarkisen 2018",
+        "downloadable": false
+    },
+    "uploads/ASR-A1-7_1.pdf": {
+        "valid_from": 20091101,
+        "valid_to": 99991231,
+        "title": "Technische Regeln f\u00fcr Arbeitsst\u00e4tten - T\u00fcren und Tore",
+        "downloadable": true
+    },
+    "uploads/DGUV A3 Elektrische Anlagen und Betriebsmittel_1.pdf": {
+        "valid_from": 19970101,
+        "valid_to": 99991231,
+        "title": "DGUV A3 Unfallverh\u00fctungsvorschrift - Elektrische Anlagen und Betriebsmittel",
+        "downloadable": true
+    },
+    "uploads/DGUV Info 208-016 Leitern_1.pdf": {
+        "valid_from": 0,
+        "valid_to": 99991231,
+        "title": "DGUV Info - Die Verwendung von Leitern und Tritten ",
+        "downloadable": true
     }
 }

@@ -13,22 +13,32 @@ print('Available chat/completion models:')
 for model in models:
     print(model.id)
 
-# Example usage
-response = client.chat.completions.create(
-    model="qwen3.6-35b-a3b",
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "What is the capital of France?"}
-    ]
-)
+try:
+    # Example usage
+    print("Testing chat completion with model:", st.secrets["model_id"])
+    response = client.chat.completions.create(
+        model=st.secrets["model_id"],
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What is the capital of France?"}
+        ],
+        timeout=100
+    )
 
-print("Chat test successful. Response:")
-print(response.choices[0].message.content)
+    print("Chat test successful. Response:")
+    print(response.choices[0].message.content)
+except Exception as e:
+    print(f"Error during chat test: {e}")
+    # print("Model not available")
 
-embeddings = client.embeddings.create(input=["My name jeff"], model="qwen3-embedding-4b").data[0].embedding
-print(f"Embedding test successful")
-print(f"Embedding vector length: {len(embeddings)}")
-
+try:
+    # Example usage
+    print("Testing embedding model:", st.secrets["embedding_id"])
+    embeddings = client.embeddings.create(input=["My name jeff"], model=st.secrets["embedding_id"]).data[0].embedding
+    print(f"Embedding test successful")
+    print(f"Embedding vector length: {len(embeddings)}")
+except Exception as e:
+    print(f"Error during embedding test: {e}")
 
 import streamlit as st
 from openai import OpenAI
