@@ -28,9 +28,7 @@ user = require_login()
 # --- NAVIGATION ---
 st.sidebar.space("small")
 with st.sidebar:
-    st.write(f"Angemeldet als **{user.get('display_name') or user['sub']}**")
-    if user.get("role"):
-        st.caption(f"Rolle: {user['role']}")
+    st.write(f"Sie sind über den R+S-Login angemeledet.")
 
     if user.get("via") == "trusted_network":
         # Shared network identity: a logout would be undone on the next rerun,
@@ -41,10 +39,12 @@ with st.sidebar:
             logout()
             
             
+module_list = ["💬 Chatbot", "📄 Dokument-Chat", "📂 Datei-Upload"] if '0070001' in user.get("groups", []) else [
+    "💬 Chatbot", "📄 Dokument-Chat"]
 st.sidebar.markdown("### 🧭 Navigation")
 page = st.sidebar.radio(
     "Modus wählen:",
-    ["💬 Chatbot", "📄 Dokument-Chat", "📂 Datei-Upload"],
+    module_list,
     horizontal=False
 )
 
@@ -117,7 +117,7 @@ if "vector_stores" not in st.session_state:
 # Get the selected vector store
 vector_store = st.session_state.vector_stores
 
-if page == "📂 Datei-Upload":
+if page == "📂 Datei-Upload" and '0070001' in user.get("groups", []):
     run_file_management(client, persist_directory=persist_directory, embedding_model=st.secrets["embedding_id"], skip_prefix=st.secrets["main_directory"])
 elif page == "📄 Dokument-Chat":
     run_file_chat(vector_store, client)
