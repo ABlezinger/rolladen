@@ -139,6 +139,7 @@ def _trusted_network_user() -> dict:
         "display_name": _cfg("TRUSTED_NETWORK_DISPLAY_NAME", "Internes Netz"),
         "role": _cfg("TRUSTED_NETWORK_ROLE", "internal"),
         "via": "trusted_network",
+        "group": "test"
     }
 
 
@@ -159,6 +160,7 @@ def require_login() -> dict:
             "display_name": "Debug User",
             "role": "admin",
             "via": "debug_mode",
+            "group": "dev"
         }
         return st.session_state["user"]
 
