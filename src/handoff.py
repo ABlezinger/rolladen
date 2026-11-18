@@ -160,7 +160,7 @@ def require_login() -> dict:
             "display_name": "Debug User",
             "role": "admin",
             "via": "debug_mode",
-            "group": "dev"
+            "groups": "dev"
         }
         return st.session_state["user"]
 

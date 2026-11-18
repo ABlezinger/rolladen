@@ -2,46 +2,6 @@ import os
 from openai import OpenAI
 import streamlit as st
 
-client = OpenAI(
-    base_url="https://chat-ai.academiccloud.de/v1/",
-    api_key=st.secrets["KISSKI_API_KEY"],
-)
-
-# List available models
-models = client.models.list()
-print('Available chat/completion models:')
-for model in models:
-    print(model.id)
-
-try:
-    # Example usage
-    print("Testing chat completion with model:", st.secrets["model_id"])
-    response = client.chat.completions.create(
-        model=st.secrets["model_id"],
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "What is the capital of France?"}
-        ],
-        timeout=100
-    )
-
-    print("Chat test successful. Response:")
-    print(response.choices[0].message.content)
-except Exception as e:
-    print(f"Error during chat test: {e}")
-    # print("Model not available")
-
-try:
-    # Example usage
-    print("Testing embedding model:", st.secrets["embedding_id"])
-    embeddings = client.embeddings.create(input=["My name jeff"], model=st.secrets["embedding_id"]).data[0].embedding
-    print(f"Embedding test successful")
-    print(f"Embedding vector length: {len(embeddings)}")
-except Exception as e:
-    print(f"Error during embedding test: {e}")
-
-import streamlit as st
-from openai import OpenAI
 
 def check_safety_llama_guard_3(text):
     """
@@ -98,6 +58,47 @@ def check_safety_llama_guard_3(text):
 check_safety_llama_guard_3("This is a test message to check safety.")
 
 print("Safety check completed.")
+client = OpenAI(
+    base_url="https://chat-ai.academiccloud.de/v1/",
+    api_key=st.secrets["KISSKI_API_KEY"],
+)
+
+# List available models
+models = client.models.list()
+print('Available chat/completion models:')
+for model in models:
+    print(model.id)
+
+try:
+    # Example usage
+    print("Testing chat completion with model:", st.secrets["model_id"])
+    response = client.chat.completions.create(
+        model=st.secrets["model_id"],
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": "What is the capital of France?"}
+        ],
+        timeout=100
+    )
+
+    print("Chat test successful. Response:")
+    print(response.choices[0].message.content)
+except Exception as e:
+    print(f"Error during chat test: {e}")
+    # print("Model not available")
+
+try:
+    # Example usage
+    print("Testing embedding model:", st.secrets["embedding_id"])
+    embeddings = client.embeddings.create(input=["My name jeff"], model=st.secrets["embedding_id"]).data[0].embedding
+    print(f"Embedding test successful")
+    print(f"Embedding vector length: {len(embeddings)}")
+except Exception as e:
+    print(f"Error during embedding test: {e}")
+
+import streamlit as st
+from openai import OpenAI
+
 
 # # Try to get embedding models (this may not work with all providers)
 # print('\nTrying to list embedding models...')

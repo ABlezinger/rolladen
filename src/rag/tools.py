@@ -43,3 +43,4 @@ def get_list_of_available_docs(doc_info=None) -> str:
         text += f"- {title} (gültig von {valid_from} bis {valid_to})\n"
 
     return text
+
