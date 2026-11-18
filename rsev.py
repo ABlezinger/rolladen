@@ -30,8 +30,6 @@ st.sidebar.space("small")
 with st.sidebar:
     st.write(f"Sie sind über den R+S-Login angemeledet.")
 
-    st.write(f"Angemeldet als **{user.get('display_name') or user['sub']}**")
-
     if user.get("via") == "trusted_network":
         # Shared network identity: a logout would be undone on the next rerun,
         # so we don't offer one. Flag the reduced accountability instead.
@@ -40,7 +38,8 @@ with st.sidebar:
         if st.button("Abmelden"):
             logout()
             
-module_list = ["💬 Chatbot", "📄 Dokument-Chat",  "📂 Datei-Upload"] if '0070001' in user.get("groups", []) else [
+            
+module_list = ["💬 Chatbot", "📄 Dokument-Chat", "📂 Datei-Upload"] if '0070001' in user.get("groups", []) else [
     "💬 Chatbot", "📄 Dokument-Chat"]
 st.sidebar.markdown("### 🧭 Navigation")
 page = st.sidebar.radio(

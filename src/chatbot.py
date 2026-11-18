@@ -84,6 +84,8 @@ def _render_retrieved_doc(doc, key_prefix="", doc_index=0):
 def _create_context_snippet(doc):
     """Create a context snippet for the system prompt from a Document object."""
     metadata = doc.metadata
+    print("HIER")
+    print(doc.metadata)
     valid_from = metadata["valid_from"]
     if valid_from == 15000101:
         valid_from = "-"

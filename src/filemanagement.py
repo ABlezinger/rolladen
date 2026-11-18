@@ -13,6 +13,7 @@ from src.rag.vector_store_management import (
     delete_document_from_vector_store,
     sync_metadata
 )
+import time
 from src.document_utils import DocListEntry, DOCUMENT_CLASSES, get_doc_class_info_text
 from pathlib import Path
 from langchain_community.vectorstores import Chroma
@@ -245,6 +246,71 @@ class DatabaseFileExplorer:
     def fmt(self, val):
         return str(val).replace("unknown", "--")
     
+    def _show_date_field(self, value) -> str: 
+        try:
+            return datetime.datetime.strptime(str(value), "%Y%m%d").strftime("%d.%m.%Y")
+        except:
+            return "corrupted"
+        
+    @st.dialog("Delete File")
+    def delete_file_dialog(self, file_to_delete: str, file_name: str):
+        
+        st.warning(f"⚠️ Möchten Sie die Datei **{file_name}** wirklich löschen?")
+        st.caption("Diese Aktion löscht die Datei und alle zugehörigen Chunks aus dem Vektorstore.")
+        
+        col1, col2, = st.columns([1, 1])
+        with col1:
+            if st.button("✅ Ja, löschen", key=f"{self.key_prefix}confirm_delete", type="primary", width="stretch"):
+                progr = st.progress(0.0, text="Löschen...")
+                success, message = self._delete_file(file_to_delete)
+                time.sleep(0.2)
+                progr.progress(0.2, text="Löschen...")
+                
+                if success:
+                    st.success(message)
+                    time.sleep(0.2)
+                    progr.progress(0.5, text="Datenbank laden...")
+                    
+                    # Clear confirmation state
+                    del st.session_state[self._get_state_key('delete_confirm_file')]
+                    del st.session_state[self._get_state_key('delete_confirm_name')]
+                    
+                    # Reload vector store in session state
+                    try:
+                        st.session_state.vector_stores = load_unified_vector_store(self.persist_directory)
+                        if st.session_state.vector_stores is None:
+                            embeddings = OpenAIEmbeddingsWrapper(self.client, self.embedding_model)
+                            st.session_state.vector_stores = Chroma(
+                                persist_directory=self.persist_directory,
+                                embedding_function=embeddings
+                            )
+                    except Exception as e:
+                        st.warning(f"Hinweis: Vektorstore konnte nicht neu geladen werden: {str(e)}")
+                    
+                    # Clear cache to refresh the view
+                    if "db_file_list" in st.session_state:
+                        del st.session_state.db_file_list
+                    if "db_metadata_count" in st.session_state:
+                        del st.session_state.db_metadata_count
+                    progr.progress(1.0, text="Datei gelöscht")
+                    # Force rebuild of tree
+                    keys_to_remove = [k for k in st.session_state.keys() if k.startswith("db_explorer_")]
+                    for key in keys_to_remove:
+                        if key not in [self._get_state_key('delete_confirm_file'), self._get_state_key('delete_confirm_name')]:
+                            del st.session_state[key]
+                    st.rerun()
+                else:
+                    st.error(message)
+                    del st.session_state[self._get_state_key('delete_confirm_file')]
+                    del st.session_state[self._get_state_key('delete_confirm_name')]
+        
+        with col2:
+            if st.button("❌ Abbrechen", key=f"{self.key_prefix}cancel_delete", width="stretch"):
+                del st.session_state[self._get_state_key('delete_confirm_file')]
+                del st.session_state[self._get_state_key('delete_confirm_name')]
+                st.rerun()
+
+
     def render(self):
         """Render the file explorer component."""
         # Custom styling
@@ -313,6 +379,14 @@ class DatabaseFileExplorer:
                     gap: 0.1rem;
                     align-items: center;
                 }
+                
+                .st-key-db_explorer_confirm_delete button,
+                .st-key-db_explorer_cancel_delete button {
+                    height: 40px;
+                    min-height: 40px;
+                    padding: 8px 12px;
+                    white-space: nowrap;
+                }
             </style>
         """)
         
@@ -379,7 +453,8 @@ class DatabaseFileExplorer:
                         padding: 0rem 0.3rem;
                     }
 
-                    div.stButton > button {
+                    div.stButton:not(.st-key-db_explorer_confirm_delete)
+                                :not(.st-key-db_explorer_cancel_delete) > button {
                         padding: 2px 6px;
                         font-size: 12px;
                         height: 28px;
@@ -422,8 +497,8 @@ class DatabaseFileExplorer:
                                         ("Titel:", self.fmt(item.get("title", "No title"))),
                                         ("Pfad:", item.get("full_path", "--")),
                                         ("Dokumentklasse:", f"{item.get('doc_class', 'n.a.')}"),
-                                        ("Gültig von:", f"{datetime.datetime.strptime(str(item.get('valid_from', 15000101)), '%Y%m%d').strftime('%d.%m.%Y') if item.get('valid_from', 15000101) != 15000101 else '--'}"),
-                                        ("Gültig bis:", f"{datetime.datetime.strptime(str(item.get('valid_to', 99991231)), '%Y%m%d').strftime('%d.%m.%Y') if item.get('valid_to', 99991231) != 99991231 else '--'}"),
+                                        ("Gültig von:", f"{self._show_date_field(str(item.get('valid_from', 15000101))) if item.get('valid_from', 15000101) != 15000101 else '--'}"),
+                                        ("Gültig bis:", f"{self._show_date_field(str(item.get('valid_to', 99991231))) if item.get('valid_to', 99991231) != 99991231 else '--'}"),
                                         ("Herunterladbar:", "Ja" if item.get("downloadable", False) else "Nein"),
                                         ("Zuletzt bearbeitet:", f"{datetime.datetime.strptime(str(item.get('date_edited')), '%Y%m%d').strftime('%d.%m.%Y') if item.get('date_edited') else 'Unbekannt'}"),
                                         ("Bearbeitet von:", self.fmt(item.get("edited_by", "System"))),
@@ -448,57 +523,59 @@ class DatabaseFileExplorer:
                                             st.toast("Download gestartet.", icon="📥")
             # Handle deletion confirmation
             if self._get_state_key('delete_confirm_file') in st.session_state:
-                file_to_delete = st.session_state[self._get_state_key('delete_confirm_file')]
-                file_name = st.session_state[self._get_state_key('delete_confirm_name')]
+                self.delete_file_dialog(file_to_delete=st.session_state[self._get_state_key('delete_confirm_file')], 
+                                 file_name=st.session_state[self._get_state_key('delete_confirm_name')])
+                # file_to_delete = st.session_state[self._get_state_key('delete_confirm_file')]
+                # file_name = st.session_state[self._get_state_key('delete_confirm_name')]
                 
-                st.divider()
-                st.warning(f"⚠️ Möchten Sie die Datei **{file_name}** wirklich löschen?")
-                st.caption("Diese Aktion löscht die Datei und alle zugehörigen Chunks aus dem Vektorstore.")
+                # st.divider()
+                # st.warning(f"⚠️ Möchten Sie die Datei **{file_name}** wirklich löschen?")
+                # st.caption("Diese Aktion löscht die Datei und alle zugehörigen Chunks aus dem Vektorstore.")
                 
-                col1, col2, col3 = st.columns([1, 1, 3])
-                with col1:
-                    if st.button("✅ Ja, löschen", key=f"{self.key_prefix}confirm_delete", type="primary"):
-                        success, message = self._delete_file(file_to_delete)
+                # col1, col2, col3 = st.columns([1, 1, 3])
+                # with col1:
+                #     if st.button("✅ Ja, löschen", key=f"{self.key_prefix}confirm_delete", type="primary"):
+                #         success, message = self._delete_file(file_to_delete)
                         
-                        if success:
-                            st.success(message)
-                            # Clear confirmation state
-                            del st.session_state[self._get_state_key('delete_confirm_file')]
-                            del st.session_state[self._get_state_key('delete_confirm_name')]
+                #         if success:
+                #             st.success(message)
+                #             # Clear confirmation state
+                #             del st.session_state[self._get_state_key('delete_confirm_file')]
+                #             del st.session_state[self._get_state_key('delete_confirm_name')]
                             
-                            # Reload vector store in session state
-                            try:
-                                st.session_state.vector_stores = load_unified_vector_store(self.persist_directory)
-                                if st.session_state.vector_stores is None:
-                                    embeddings = OpenAIEmbeddingsWrapper(self.client, self.embedding_model)
-                                    st.session_state.vector_stores = Chroma(
-                                        persist_directory=self.persist_directory,
-                                        embedding_function=embeddings
-                                    )
-                            except Exception as e:
-                                st.warning(f"Hinweis: Vektorstore konnte nicht neu geladen werden: {str(e)}")
+                #             # Reload vector store in session state
+                #             try:
+                #                 st.session_state.vector_stores = load_unified_vector_store(self.persist_directory)
+                #                 if st.session_state.vector_stores is None:
+                #                     embeddings = OpenAIEmbeddingsWrapper(self.client, self.embedding_model)
+                #                     st.session_state.vector_stores = Chroma(
+                #                         persist_directory=self.persist_directory,
+                #                         embedding_function=embeddings
+                #                     )
+                #             except Exception as e:
+                #                 st.warning(f"Hinweis: Vektorstore konnte nicht neu geladen werden: {str(e)}")
                             
-                            # Clear cache to refresh the view
-                            if "db_file_list" in st.session_state:
-                                del st.session_state.db_file_list
-                            if "db_metadata_count" in st.session_state:
-                                del st.session_state.db_metadata_count
-                            # Force rebuild of tree
-                            keys_to_remove = [k for k in st.session_state.keys() if k.startswith("db_explorer_")]
-                            for key in keys_to_remove:
-                                if key not in [self._get_state_key('delete_confirm_file'), self._get_state_key('delete_confirm_name')]:
-                                    del st.session_state[key]
-                            st.rerun()
-                        else:
-                            st.error(message)
-                            del st.session_state[self._get_state_key('delete_confirm_file')]
-                            del st.session_state[self._get_state_key('delete_confirm_name')]
+                #             # Clear cache to refresh the view
+                #             if "db_file_list" in st.session_state:
+                #                 del st.session_state.db_file_list
+                #             if "db_metadata_count" in st.session_state:
+                #                 del st.session_state.db_metadata_count
+                #             # Force rebuild of tree
+                #             keys_to_remove = [k for k in st.session_state.keys() if k.startswith("db_explorer_")]
+                #             for key in keys_to_remove:
+                #                 if key not in [self._get_state_key('delete_confirm_file'), self._get_state_key('delete_confirm_name')]:
+                #                     del st.session_state[key]
+                #             st.rerun()
+                #         else:
+                #             st.error(message)
+                #             del st.session_state[self._get_state_key('delete_confirm_file')]
+                #             del st.session_state[self._get_state_key('delete_confirm_name')]
                 
-                with col2:
-                    if st.button("❌ Abbrechen", key=f"{self.key_prefix}cancel_delete"):
-                        del st.session_state[self._get_state_key('delete_confirm_file')]
-                        del st.session_state[self._get_state_key('delete_confirm_name')]
-                        st.rerun()
+                # with col2:
+                #     if st.button("❌ Abbrechen", key=f"{self.key_prefix}cancel_delete"):
+                #         del st.session_state[self._get_state_key('delete_confirm_file')]
+                #         del st.session_state[self._get_state_key('delete_confirm_name')]
+                #         st.rerun()
             
             st.divider()
             
@@ -736,20 +813,20 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                     valid_from = st.date_input(
                         f"Gültig von (optional)",
                         value=None,
+                        min_value=datetime.date(1980, 1, 1),
                         key=f"valid_from_{uploaded_file.name}",
                         format="DD.MM.YYYY")
                     valid_from_int = int(valid_from.strftime("%Y%m%d")) if valid_from else 15000101
-                    st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
                     st.session_state.new_docs[uploaded_file.name]["valid_from"] = valid_from_int
                 with col2:
                     #Valid To
                     valid_to = st.date_input(
                         f"Gültig bis (optional)",
                         value=None,
+                        min_value=datetime.date(1980, 1, 1),
                         key=f"valid_to_{uploaded_file.name}",
                         format="DD.MM.YYYY")
                     valid_to_int = int(valid_to.strftime("%Y%m%d")) if valid_to else 99991231
-                    st.session_state.new_docs[uploaded_file.name] = st.session_state.new_docs.get(uploaded_file.name, {})
                     st.session_state.new_docs[uploaded_file.name]["valid_to"] = valid_to_int
                     
                 # Validation
