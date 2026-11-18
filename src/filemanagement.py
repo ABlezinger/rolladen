@@ -310,7 +310,6 @@ class DatabaseFileExplorer:
                 del st.session_state[self._get_state_key('delete_confirm_name')]
                 st.rerun()
 
-
     def render(self):
         """Render the file explorer component."""
         # Custom styling
@@ -583,11 +582,30 @@ class DatabaseFileExplorer:
             st.caption(f"Gesamt: {len(items)} Element(e)")
             self._render_pagination(len(items))
             
+def save_metadata_changes() -> None:
+    pass
 # add near top of file
 @st.fragment
 def _render_db_explorer_fragment(file_paths, client, persist_directory, embedding_model, skip_prefix, key_prefix):
     with st.container(border=True, key=f"{key_prefix}file_explorer_fragment"):
-        st.markdown(f"📂 Datei-Explorer ({len(file_paths)} Dateien)")
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.markdown(f"📂 Datei-Explorer ({len(file_paths)} Dateien)")
+        with col2:
+            with st.container(horizontal_alignment="right"):
+                if st.session_state.get("metadata_changes") !=  {} or True:
+                    if st.button("💾 Änderungen speichern", key=f"{key_prefix}save_metadata_changes"):
+                        save_metadata_changes()
+                    st.html(
+                        f"""
+                        <div style="
+                            width: 100%; text-align: right; color: #ff0000; font-size: 0.8rem; line-height: 1.2;
+                        ">
+                            {len(st.session_state.get('metadata_changes', {}))}
+                            ungespeicherte Änderungen
+                        </div>
+                        """
+                    )
         st.caption("💡 Die Ansicht zeigt Ordner ab 'drive_download_combined' + den 'uploads' Ordner")
         explorer = DatabaseFileExplorer(
             file_paths=file_paths,
@@ -641,48 +659,48 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         }
     </style>
     """)
-    # Initialize authentication state
-    if "file_management_authenticated" not in st.session_state:
-        st.session_state.file_management_authenticated = False
+    # # Initialize authentication state
+    # if "file_management_authenticated" not in st.session_state:
+    #     st.session_state.file_management_authenticated = False
     
-    # If not authenticated, show login form
-    if not st.session_state.file_management_authenticated:
-        st.title("🔒 Anmeldung erforderlich")
-        st.markdown("Bitte geben Sie das Passwort ein, um auf die Datei-Upload-Funktion zuzugreifen.")
+    # # If not authenticated, show login form
+    # if not st.session_state.file_management_authenticated:
+    #     st.title("🔒 Anmeldung erforderlich")
+    #     st.markdown("Bitte geben Sie das Passwort ein, um auf die Datei-Upload-Funktion zuzugreifen.")
         
-        # Store error/warning messages to display outside form
-        error_message = None
-        warning_message = None
+    #     # Store error/warning messages to display outside form
+    #     error_message = None
+    #     warning_message = None
         
-        # Use form to enable Enter key submission
-        with st.form("login_form", clear_on_submit=False):
-            password = st.text_input(
-                "Passwort:",
-                type="password",
-                key="file_management_password_input"
-            )
+    #     # Use form to enable Enter key submission
+    #     with st.form("login_form", clear_on_submit=False):
+    #         password = st.text_input(
+    #             "Passwort:",
+    #             type="password",
+    #             key="file_management_password_input"
+    #         )
             
-            col1, _ = st.columns([1, 4])
-            with col1:
-                submitted = st.form_submit_button("Anmelden", use_container_width=True)
+    #         col1, _ = st.columns([1, 4])
+    #         with col1:
+    #             submitted = st.form_submit_button("Anmelden", use_container_width=True)
             
-            if submitted:
-                if password:
-                    if verify_password(password):
-                        st.session_state.file_management_authenticated = True
-                        st.rerun()
-                    else:
-                        error_message = "❌ Falsches Passwort. Bitte versuchen Sie es erneut."
-                else:
-                    warning_message = "⚠️ Bitte geben Sie ein Passwort ein."
+    #         if submitted:
+    #             if password:
+    #                 if verify_password(password):
+    #                     st.session_state.file_management_authenticated = True
+    #                     st.rerun()
+    #                 else:
+    #                     error_message = "❌ Falsches Passwort. Bitte versuchen Sie es erneut."
+    #             else:
+    #                 warning_message = "⚠️ Bitte geben Sie ein Passwort ein."
         
-        # Display error/warning messages outside the form for full width
-        if error_message:
-            st.error(error_message)
-        if warning_message:
-            st.warning(warning_message)
+    #     # Display error/warning messages outside the form for full width
+    #     if error_message:
+    #         st.error(error_message)
+    #     if warning_message:
+    #         st.warning(warning_message)
         
-        st.stop()
+    #     st.stop()
     
     # If authenticated, show file management interface
     st.title("Datei-Upload (Word & PDF)")
@@ -694,16 +712,19 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
             docs_info = {}
         st.session_state.docs_info = docs_info
 
-    # Logout button
-    if st.button("🔓 Abmelden", key="file_management_logout_button"):
-        st.session_state.file_management_authenticated = False
-        st.rerun()
+    # # Logout button
+    # if st.button("🔓 Abmelden", key="file_management_logout_button"):
+    #     st.session_state.file_management_authenticated = False
+    #     st.rerun()
     
     st.divider()
     
     # Database file explorer section
     st.subheader("🗂️ Datenbank-Übersicht")
     st.markdown("Hier können Sie sehen, welche Dateien aktuell in der Vektordatenbank gespeichert sind.")
+    
+    if "metadata_changes" not in st.session_state:
+        st.session_state.metadata_changes = {}
     
     col1, col2 = st.columns([2, 1])
     
@@ -1019,4 +1040,3 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                 
                 # Clear the partial success files after displaying
                 del st.session_state['upload_partial_success']
-
