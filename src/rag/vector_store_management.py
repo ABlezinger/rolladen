@@ -12,7 +12,14 @@ import json
 import datetime
 from typing import Any
 
-from src.document_utils import DocListEntry
+from src.document_utils import (
+    DOC_LIST_FILENAME,
+    FOLDERS_FILENAME,
+    doc_list_entry_to_dict as _doc_list_entry_to_dict,
+    doc_list_lock,
+    load_doc_list,
+    save_doc_list,
+)
 from src.llm_client import get_client, safe_embeddings_create
 
 def clean_text(text):
@@ -26,15 +33,6 @@ def clean_text(text):
     return text.strip()
 
 
-def _doc_list_entry_to_dict(source: str, data: dict[str, Any] | None) -> dict[str, Any]:
-    """Validate a doc_list entry and return the stored JSON value shape."""
-
-    entry = DocListEntry.from_doc_list_item(source, data)
-    if hasattr(entry, "model_dump"):
-        return entry.model_dump(exclude={"source"})
-    return entry.dict(exclude={"source"})
-
-
 def _edited_metadata(edited_by: str = "system") -> dict[str, Any]:
     """Return the default edit metadata for newly authored entries."""
 
@@ -43,28 +41,6 @@ def _edited_metadata(edited_by: str = "system") -> dict[str, Any]:
         "edited_by": edited_by,
     }
 
-
-def load_doc_list(doc_list_path: str) -> dict[str, dict[str, Any]]:
-    """Load and validate doc_list.json entries."""
-
-    with open(doc_list_path, "r", encoding="utf-8") as handle:
-        raw_doc_list = json.load(handle)
-
-    return {
-        source: _doc_list_entry_to_dict(source, data)
-        for source, data in raw_doc_list.items()
-    }
-
-
-def save_doc_list(doc_list_path: str, doc_list: dict[str, dict[str, Any]]) -> None:
-    """Validate doc_list entries before writing them to disk."""
-
-    validated_doc_list = {
-        source: _doc_list_entry_to_dict(source, data)
-        for source, data in doc_list.items()
-    }
-    with open(doc_list_path, "w", encoding="utf-8") as handle:
-        json.dump(validated_doc_list, handle, indent=4)
 
 # OpenAIEmbeddingsWrapper is a wrapper around the OpenAI embeddings API.
 # It is used to embed documents and queries through the OpenAI API.
@@ -773,6 +749,8 @@ def create_unified_vector_store(original_data_folder: str, original_persist_dire
                                 doc_info[doc.metadata["source"]] = _doc_list_entry_to_dict(
                                     doc.metadata["source"],
                                     {
+                                        # keep fields not derived from chunk metadata (e.g. virtual_path)
+                                        **doc_info.get(doc.metadata["source"], {}),
                                         "title": doc.metadata.get("title", "No title"),
                                         "downloadable": doc.metadata.get("downloadable", False),
                                         "valid_from": doc.metadata["valid_from"],
@@ -884,7 +862,7 @@ def create_fresh_unified_vector_store(data_folder: str, persist_directory: str =
                 import shutil
                 for item in os.listdir(main_vector_store_path):
                     item_path = os.path.join(main_vector_store_path, item)
-                    if item == "doc_list.json":
+                    if item in (DOC_LIST_FILENAME, FOLDERS_FILENAME):
                         continue
                     if os.path.isdir(item_path) and item != "unified":
                         shutil.rmtree(item_path)
@@ -955,6 +933,7 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
         
         # Collect new documents
         new_docs = []
+        new_entries = {}  # doc_list entries for newly found files only
         failed_files = []
         for root, dirs, files in tqdm(os.walk(data_folder), desc="Scanning for new documents"):
             for file in files:
@@ -989,9 +968,11 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
                                                 print(f"⚠️ Could not fix encoding for {file_path}, skipping document: {str(e2)}")
                                                 continue
                                     if hasattr(doc, 'metadata'):
-                                        docs_info[doc.metadata["source"]] = _doc_list_entry_to_dict(
+                                        new_entries[doc.metadata["source"]] = docs_info[doc.metadata["source"]] = _doc_list_entry_to_dict(
                                             doc.metadata["source"],
                                             {
+                                                # keep fields not derived from chunk metadata (e.g. virtual_path)
+                                                **docs_info.get(doc.metadata["source"], {}),
                                                 "valid_from": doc.metadata["valid_from"],
                                                 "valid_to": doc.metadata["valid_to"],
                                                 "title": doc.metadata.get("title", "No title"),
@@ -1020,7 +1001,15 @@ def extend_existing_vector_store(data_folder: str, persist_directory: str = "kis
                         print(f"Document already exists: {file_path}")
         
         print(f"Write validity information to {persist_directory}/doc_list.json")
-        save_doc_list(f"{persist_directory}/doc_list.json", docs_info)
+        # Re-read under the lock and only add the new entries, so changes made in the file
+        # explorer meanwhile (e.g. moving files between folders) are not overwritten.
+        doc_list_path = os.path.join(persist_directory, DOC_LIST_FILENAME)
+        with doc_list_lock(persist_directory):
+            current_docs_info = load_doc_list(doc_list_path) if os.path.exists(doc_list_path) else {}
+            for source, entry in new_entries.items():
+                current_docs_info[source] = {**current_docs_info.get(source, {}), **entry}
+            save_doc_list(doc_list_path, current_docs_info)
+        docs_info = current_docs_info
         if failed_files:
             print(f"\n⚠️ Failed to process {len(failed_files)} file(s):")
             for file_path, error in failed_files:

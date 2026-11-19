@@ -14,7 +14,9 @@ from src.rag.vector_store_management import (
     sync_metadata
 )
 import time
-from src.document_utils import DocListEntry, DOCUMENT_CLASSES, get_doc_class_info_text
+from src.document_utils import DocListEntry, DOCUMENT_CLASSES, DOC_LIST_FILENAME, doc_list_lock, get_doc_class_info_text
+from src import virtual_folders as vf
+from src.virtual_folders import FolderError
 from pathlib import Path
 from langchain_community.vectorstores import Chroma
 import math
@@ -45,57 +47,149 @@ class DatabaseFileExplorer:
         self.skip_prefix = skip_prefix
         self.key_prefix = key_prefix
         self.items_per_page_options = items_per_page_options
-        if os.path.exists(persist_directory):
-            self.docs_info = load_doc_list(f"{self.persist_directory}/doc_list.json")  # To store info for documents
-        else:
-            self.docs_info = {}
-        
+        # doc_list.json holds the metadata (incl. virtual_path), folders.json the empty folders
+        self.docs_info, self.folders = vf.load_state(persist_directory)
+
         # Build virtual file tree
         self.file_tree = self._build_virtual_tree()
         self._init_session_state()
-    
+
     def _build_virtual_tree(self) -> Dict[str, Any]:
-        """Build a virtual directory tree from database file paths."""
-        tree = {}
-        
-        for file_path in self.raw_file_paths:
-            path_str = str(file_path)
-            
-            # Skip the prefix and get relative path
-            if self.skip_prefix and self.skip_prefix in path_str:
-                relative_path = path_str.split(self.skip_prefix + "/", 1)[-1]
-            elif "uploads" in path_str:
-                # Handle uploads folder - extract from uploads onwards
-                parts = Path(path_str).parts
+        """Build the virtual folder tree (virtual_path metadata, fallback: physical path)."""
+        return vf.build_tree(self.docs_info, self.folders, self.skip_prefix, self.raw_file_paths)
+
+    def _current_path(self) -> str:
+        """Virtual path of the folder currently shown ("" = root)."""
+        return "/".join(st.session_state[self._get_state_key('current_path_parts')])
+
+    def _all_folders(self) -> List[str]:
+        return sorted(vf.existing_folders(self.docs_info, self.folders, self.skip_prefix, self.raw_file_paths), key=str.lower)
+
+    @staticmethod
+    def _folder_label(path: str) -> str:
+        return "🏠 Hauptordner" if path == vf.ROOT else f"📁 {path}"
+
+    def _apply_folder_operation(self, operation, success_message: str, new_path_parts: List[str] | None = None) -> bool:
+        """Run a virtual_folders operation on the on-disk state and refresh the explorer.
+
+        operation(doc_list, folders, skip_prefix, sources) -> (doc_list, folders)
+        Returns False (and shows the error) if the operation was rejected.
+        """
+        try:
+            new_doc_list, _ = vf.locked_update(
+                self.persist_directory,
+                lambda doc_list, folders: operation(doc_list, folders, self.skip_prefix, self.raw_file_paths),
+            )
+        except FolderError as e:
+            st.error(str(e))
+            return False
+        except Exception as e:
+            st.error(f"Fehler beim Speichern der Ordnerstruktur: {e}")
+            return False
+
+        # keep the rest of the page (upload form, replace selection) in sync
+        st.session_state.docs_info = new_doc_list
+        if new_path_parts is not None:
+            st.session_state[self._get_state_key('current_path_parts')] = new_path_parts
+            st.session_state[self._get_state_key('current_page')] = 1
+        st.toast(success_message, icon="✅")
+        return True
+
+    @st.dialog("Neuer Ordner")
+    def new_folder_dialog(self, parent: str):
+        st.caption(f"Wird angelegt in: {self._folder_label(parent)}")
+        with st.form(key=f"{self.key_prefix}new_folder_form", border=False):
+            name = st.text_input("Ordnername", max_chars=vf.MAX_SEGMENT_LENGTH)
+            if st.form_submit_button("📁 Anlegen", type="primary", width="stretch"):
+                if self._apply_folder_operation(
+                    lambda d, f, skip, src: vf.create_folder(d, f, parent, name, skip, src),
+                    f"Ordner '{name.strip()}' angelegt",
+                ):
+                    st.rerun()
+
+    @st.dialog("Ordner umbenennen")
+    def rename_folder_dialog(self, path: str):
+        st.caption(f"Ordner: {self._folder_label(path)}")
+        with st.form(key=f"{self.key_prefix}rename_folder_form", border=False):
+            name = st.text_input("Neuer Name", value=vf.basename_of(path), max_chars=vf.MAX_SEGMENT_LENGTH)
+            if st.form_submit_button("✏️ Umbenennen", type="primary", width="stretch"):
                 try:
-                    uploads_idx = parts.index("uploads")
-                    relative_path = str(Path(*parts[uploads_idx:]))
-                except ValueError:
-                    relative_path = path_str
-            else:
-                relative_path = path_str
-            
-            # Build tree structure
-            parts = Path(relative_path).parts
-            current = tree
-            
-            # Navigate/create folders
-            for part in parts[:-1]:
-                if part not in current:
-                    current[part] = {"__type__": "folder", "__children__": {}}
-                current = current[part]["__children__"]
-            
-            # Add file
-            if parts:
-                filename = parts[-1]
-                current[filename] = {
-                    "__type__": "file",
-                    "__full_path__": file_path,
-                    "__size__": 0  # We don't have size info from vector DB
-                }
-        
-        return tree
-    
+                    new_path = vf.join_path(vf.parent_of(path), name)
+                except FolderError as e:
+                    st.error(str(e))
+                    return
+                if self._apply_folder_operation(
+                    lambda d, f, skip, src: vf.move_folder(d, f, path, new_path, skip, src),
+                    f"Ordner umbenannt in '{vf.basename_of(new_path)}'",
+                    new_path_parts=self._remap_current_path(path, new_path),
+                ):
+                    st.rerun()
+
+    @st.dialog("Ordner verschieben")
+    def move_folder_dialog(self, path: str):
+        st.caption(f"Ordner: {self._folder_label(path)}")
+        # every folder except the folder itself, its subfolders and its current parent
+        targets = [vf.ROOT] + [f for f in self._all_folders() if not vf.is_within(f, path)]
+        targets = [t for t in targets if t != vf.parent_of(path)]
+        if not targets:
+            st.info("Es gibt keinen anderen Zielordner.")
+            return
+        target = st.selectbox("Zielordner", targets, format_func=self._folder_label, key=f"{self.key_prefix}move_folder_target")
+        if st.button("📂 Verschieben", type="primary", width="stretch", key=f"{self.key_prefix}move_folder_confirm"):
+            try:
+                new_path = vf.join_path(target, vf.basename_of(path))
+            except FolderError as e:
+                st.error(str(e))
+                return
+            if self._apply_folder_operation(
+                lambda d, f, skip, src: vf.move_folder(d, f, path, new_path, skip, src),
+                f"Ordner verschoben nach '{self._folder_label(target)}'",
+                new_path_parts=self._remap_current_path(path, new_path),
+            ):
+                st.rerun()
+
+    @st.dialog("Ordner löschen")
+    def delete_folder_dialog(self, path: str):
+        st.warning(f"Soll der Ordner **{path}** gelöscht werden?")
+        st.caption("Es können nur leere Ordner gelöscht werden. Dateien werden dabei nie gelöscht.")
+        if st.button("🗑️ Ordner löschen", type="primary", width="stretch", key=f"{self.key_prefix}delete_folder_confirm"):
+            current = self._current_path()
+            new_parts = vf.split_path(vf.parent_of(path)) if vf.is_within(current, path) else None
+            if self._apply_folder_operation(
+                lambda d, f, skip, src: vf.delete_folder(d, f, path, skip, src),
+                f"Ordner '{vf.basename_of(path)}' gelöscht",
+                new_path_parts=new_parts,
+            ):
+                st.rerun()
+
+    @st.dialog("Datei verschieben")
+    def move_file_dialog(self, source: str, title: str):
+        current = vf.resolve_virtual_path(source, self.docs_info, self.skip_prefix)
+        st.caption(f"Datei: **{title}**  \nAktueller Ordner: {self._folder_label(current)}")
+        targets = [t for t in [vf.ROOT] + self._all_folders() if t != current]
+        if not targets:
+            st.info("Es gibt keinen anderen Zielordner. Legen Sie zuerst einen Ordner an.")
+            return
+        target = st.selectbox("Zielordner", targets, format_func=self._folder_label, key=f"{self.key_prefix}move_file_target")
+        st.caption("Die Datei selbst und der Vektorstore bleiben unverändert, nur die Einordnung ändert sich.")
+        if st.button("📂 Verschieben", type="primary", width="stretch", key=f"{self.key_prefix}move_file_confirm"):
+            if self._apply_folder_operation(
+                lambda d, f, skip, src: vf.move_file(d, f, source, target, skip, src),
+                f"Datei verschoben nach '{self._folder_label(target)}'",
+            ):
+                st.rerun()
+
+    def _request_dialog(self, kind: str, *args) -> None:
+        """Open a dialog at the end of render(), outside of popovers and expanders."""
+        st.session_state[self._get_state_key("pending_dialog")] = (kind, args)
+
+    def _remap_current_path(self, old_path: str, new_path: str) -> List[str] | None:
+        """New breadcrumb if the folder currently shown is (inside) a moved folder."""
+        current = self._current_path()
+        if current and vf.is_within(current, old_path):
+            return vf.split_path(new_path + current[len(old_path):])
+        return None
+
     def _get_state_key(self, key: str) -> str:
         """Generate a unique session state key."""
         return f"{self.key_prefix}{key}"
@@ -117,41 +211,49 @@ class DatabaseFileExplorer:
         """Navigate to current directory in the tree."""
         current = self.file_tree
         path_parts = st.session_state[self._get_state_key('current_path_parts')]
-        
+
         for part in path_parts:
-            if part in current and current[part].get("__type__") == "folder":
-                current = current[part]["__children__"]
+            if part in current["folders"]:
+                current = current["folders"][part]
             else:
-                # Path doesn't exist, reset to root
+                # Path doesn't exist (anymore), reset to root
                 st.session_state[self._get_state_key('current_path_parts')] = []
                 return self.file_tree
-        
+
         return current
-    
+
     def _get_items_in_current_directory(self) -> List[Dict[str, Any]]:
         """Get list of items in current directory."""
         current_dir = self._get_current_directory()
+        current_path = self._current_path()
         items = []
-        
-        for name, data in current_dir.items():
-            if name.startswith("__"):
-                continue
-            
-            is_directory = data.get("__type__") == "folder"
+
+        for name in current_dir["folders"]:
             items.append({
                 'name': name,
-                'is_directory': is_directory,
-                'size': data.get("__size__", 0) if not is_directory else 0,
-                'full_path': data.get("__full_path__", ""),
-                'valid_from': self.docs_info.get(data.get("__full_path__", ""), {}).get("valid_from", 15000101) if not is_directory else None,
-                'valid_to': self.docs_info.get(data.get("__full_path__", ""), {}).get("valid_to", 99991231) if not is_directory else None,
-                'downloadable': self.docs_info.get(data.get("__full_path__", ""), {}).get("downloadable", False) if not is_directory else None,
-                'date_edited': self.docs_info.get(data.get("__full_path__", ""), {}).get("date_edited", None) if not is_directory else None,
-                'edited_by': self.docs_info.get(data.get("__full_path__", ""), {}).get("edited_by", None) if not is_directory else None,
-                'title': self.docs_info.get(data.get("__full_path__", ""), {}).get("title", "No title") if not is_directory else None,
-                'doc_class': self.docs_info.get(data.get("__full_path__", ""), {}).get("doc_class", "Unbekannt") if not is_directory else None
+                'is_directory': True,
+                'size': 0,
+                'full_path': vf.join_path(current_path, name),  # virtual path of the folder
             })
-        
+
+        for source, name in current_dir["files"].items():
+            info = self.docs_info.get(source, {})
+            items.append({
+                'name': name,
+                'is_directory': False,
+                'size': 0,  # We don't have size info from vector DB
+                'full_path': source,
+                'virtual_path': current_path,
+                'has_doc_list_entry': source in self.docs_info,
+                'valid_from': info.get("valid_from", 15000101),
+                'valid_to': info.get("valid_to", 99991231),
+                'downloadable': info.get("downloadable", False),
+                'date_edited': info.get("date_edited", None),
+                'edited_by': info.get("edited_by", None),
+                'title': info.get("title", "No title"),
+                'doc_class': info.get("doc_class", "Unbekannt"),
+            })
+
         # Sort: folders first, then files, alphabetically
         items.sort(key=lambda x: (not x['is_directory'], x['name'].lower()))
         return items
@@ -191,14 +293,28 @@ class DatabaseFileExplorer:
             
             if not success:
                 return False, f"Fehler beim Löschen aus Vektorstore: {error_msg}"
-            
+
             # Delete physical file if it exists
             if os.path.exists(file_path):
                 os.remove(file_path)
-                return True, f"Erfolgreich gelöscht: Datei und {deleted_count} Chunks aus Vektorstore entfernt"
+                message = f"Erfolgreich gelöscht: Datei und {deleted_count} Chunks aus Vektorstore entfernt"
             else:
-                return True, f"Erfolgreich aus Vektorstore gelöscht ({deleted_count} Chunks). Physische Datei nicht gefunden."
-                
+                message = f"Erfolgreich aus Vektorstore gelöscht ({deleted_count} Chunks). Physische Datei nicht gefunden."
+
+            # Remove the doc_list entry; the (virtual) folder stays visible even if now empty
+            def remove_entry(doc_list, folders):
+                folder = vf.resolve_virtual_path(file_path, doc_list, self.skip_prefix)
+                remaining = {source: entry for source, entry in doc_list.items() if source != file_path}
+                kept_folders = set(folders) | {folder} if folder else set(folders)
+                return remaining, kept_folders
+
+            try:
+                new_doc_list, _ = vf.locked_update(self.persist_directory, remove_entry)
+                st.session_state.docs_info = new_doc_list
+            except Exception as e:
+                message += f" Hinweis: Eintrag in doc_list.json konnte nicht entfernt werden: {e}"
+            return True, message
+
         except Exception as e:
             return False, f"Fehler beim Löschen: {str(e)}"
     
@@ -390,12 +506,16 @@ class DatabaseFileExplorer:
         """)
         
         with st.container(border=True, key=f"{self.key_prefix}file_explorer_container"):
-            # Top bar with items per page
-            col1, col2 = st.columns([4, 1])
-            
+            # Top bar: current path, new folder, items per page
+            col1, col_new, col2 = st.columns([3, 1, 1], vertical_alignment="center")
+
             with col1:
                 st.markdown(f"**{self._get_current_path_display()}**")
-            
+
+            with col_new:
+                if st.button("📁 Neuer Ordner", key=f"{self.key_prefix}new_folder", help="Ordner im aktuellen Ordner anlegen"):
+                    self._request_dialog("new_folder", self._current_path())
+
             with col2:
                 items_per_page = st.selectbox(
                     "Items pro Seite",
@@ -483,10 +603,21 @@ class DatabaseFileExplorer:
                     col1, col2, col3, col4, col5 = st.columns([7, 2, 2, 2, 3], vertical_alignment="center")
                     
                     if is_dir:
-                        if st.button(f"{icon} {name}", key=f"open_{idx}"):
-                            st.session_state[self._get_state_key("current_path_parts")].append(name)
-                            st.session_state[self._get_state_key("current_page")] = 1
-                            st.rerun()
+                        folder_path = item["full_path"]
+                        c_open, c_actions = st.columns([12, 1], vertical_alignment="center")
+                        with c_open:
+                            if st.button(f"{icon} {name}", key=f"open_{idx}"):
+                                st.session_state[self._get_state_key("current_path_parts")].append(name)
+                                st.session_state[self._get_state_key("current_page")] = 1
+                                st.rerun()
+                        with c_actions:
+                            with st.popover("⋯", help="Ordner bearbeiten", key=f"{self.key_prefix}folder_actions_{idx}"):
+                                if st.button("Umbenennen", icon="✏️", key=f"{self.key_prefix}rename_folder_{idx}", width="stretch"):
+                                    self._request_dialog("rename_folder", folder_path)
+                                if st.button("Verschieben", icon="📂", key=f"{self.key_prefix}move_folder_{idx}", width="stretch"):
+                                    self._request_dialog("move_folder", folder_path)
+                                if st.button("Löschen", icon="🗑️", key=f"{self.key_prefix}delete_folder_{idx}", width="stretch"):
+                                    self._request_dialog("delete_folder", folder_path)
                     else:
                         with st.expander(f"{icon} {item.get('title', name)}", expanded=False, type="default") as doc_expander:
                             with st.container() as doc_container:
@@ -494,6 +625,7 @@ class DatabaseFileExplorer:
                                 with col1:
                                     rows = [
                                         ("Titel:", self.fmt(item.get("title", "No title"))),
+                                        ("Ordner:", self._folder_label(item.get("virtual_path", vf.ROOT))),
                                         ("Pfad:", item.get("full_path", "--")),
                                         ("Dokumentklasse:", f"{item.get('doc_class', 'n.a.')}"),
                                         ("Gültig von:", f"{self._show_date_field(str(item.get('valid_from', 15000101))) if item.get('valid_from', 15000101) != 15000101 else '--'}"),
@@ -518,8 +650,30 @@ class DatabaseFileExplorer:
                                             st.session_state[self._get_state_key("delete_confirm_file")] = item["full_path"]
                                             st.session_state[self._get_state_key("delete_confirm_name")] = name
                                             st.rerun()
+                                        if st.button(
+                                            "Verschieben", key=f"mv_{idx}", icon="📂", width="stretch",
+                                            disabled=not item.get("has_doc_list_entry"),
+                                            help="In einen anderen Ordner verschieben" if item.get("has_doc_list_entry")
+                                            else "Kein Eintrag in doc_list.json, daher nicht verschiebbar",
+                                        ):
+                                            self._request_dialog("move_file", item["full_path"], self.fmt(item.get("title", name)))
                                         if st.download_button("Herunterladen", icon="📥", key=f"dl_{idx}", disabled=True, data="test"):
                                             st.toast("Download gestartet.", icon="📥")
+            # Open a requested folder/move dialog (one per run; popped so a later rerun closes it)
+            pending = st.session_state.pop(self._get_state_key("pending_dialog"), None)
+            if pending:
+                kind, args = pending
+                # Streamlit allows only one dialog per run: drop a lingering delete confirmation
+                st.session_state.pop(self._get_state_key('delete_confirm_file'), None)
+                st.session_state.pop(self._get_state_key('delete_confirm_name'), None)
+                {
+                    "new_folder": self.new_folder_dialog,
+                    "rename_folder": self.rename_folder_dialog,
+                    "move_folder": self.move_folder_dialog,
+                    "delete_folder": self.delete_folder_dialog,
+                    "move_file": self.move_file_dialog,
+                }[kind](*args)
+
             # Handle deletion confirmation
             if self._get_state_key('delete_confirm_file') in st.session_state:
                 self.delete_file_dialog(file_to_delete=st.session_state[self._get_state_key('delete_confirm_file')], 
@@ -606,7 +760,7 @@ def _render_db_explorer_fragment(file_paths, client, persist_directory, embeddin
                         </div>
                         """
                     )
-        st.caption("💡 Die Ansicht zeigt Ordner ab 'drive_download_combined' + den 'uploads' Ordner")
+        st.caption("💡 Die Ordner sind virtuell: Anlegen, Umbenennen und Verschieben ändert nur die Einordnung im Explorer, nicht die Dateien selbst oder den Vektorstore.")
         explorer = DatabaseFileExplorer(
             file_paths=file_paths,
             client=client,
@@ -784,13 +938,29 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
         value=st.session_state.doc_list_editor,
         key="doc_list_editor_input",
     ).strip() or "System"
-    
+
+    # Target folder in the explorer (virtual only: files are always stored flat in 'uploads/')
+    upload_doc_list, upload_folders = vf.load_state(persist_directory)
+    folder_options = [vf.ROOT] + sorted(
+        vf.existing_folders(upload_doc_list, upload_folders, skip_prefix, st.session_state.get("db_file_list", set())),
+        key=str.lower,
+    )
+    default_folder = "uploads" if "uploads" in folder_options else vf.ROOT
+    upload_target_folder = st.selectbox(
+        "Zielordner im Datei-Explorer",
+        folder_options,
+        index=folder_options.index(default_folder),
+        format_func=DatabaseFileExplorer._folder_label,
+        key="upload_target_folder",
+        help="Neue Ordner legen Sie oben im Datei-Explorer an. Die Einordnung lässt sich später jederzeit ändern.",
+    )
+
     # Initialize file uploader key for clearing after upload
     if "file_uploader_key" not in st.session_state:
         st.session_state.file_uploader_key = 0
     
     uploaded_files = st.file_uploader(
-        "Bitte lade eine oder mehrere Word- (.docx) oder PDF-Dateien hoch (Diese Dateien liegen anschließend im Ordner 'uploads'):",
+        "Bitte lade eine oder mehrere Word- (.docx) oder PDF-Dateien hoch (sie erscheinen anschließend im gewählten Zielordner):",
         type=["pdf", "docx"],
         accept_multiple_files=True,
         key=f"file_uploader_{st.session_state.file_uploader_key}"
@@ -898,6 +1068,7 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                     status.update(label="💾 Speichere Dateien...", state="running")
                     saved_files = []
                     saved_count = 0
+                    doc_list_updates = {}  # source -> fields added/changed by this upload
                     
                     progress_bar = st.progress(0)
                     for idx, uploaded_file in enumerate(uploaded_files, 1):
@@ -930,12 +1101,14 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                                 "downloadable": st.session_state.new_docs[uploaded_file.name].get("downloadable"),
                                 "date_edited": int(datetime.date.today().strftime("%Y%m%d")),
                                 "edited_by": st.session_state.doc_list_editor,
+                                "virtual_path": upload_target_folder,
                             },
                         )
                         entry_dump = entry.model_dump() if hasattr(entry, "model_dump") else entry.dict()
                         st.session_state.docs_info[file_path] = {
                             key: value for key, value in entry_dump.items() if key != "source"
                         }
+                        doc_list_updates[file_path] = dict(st.session_state.docs_info[file_path])
                         
                         # handle replace document option
                         if old_file := st.session_state.new_docs[uploaded_file.name].get("replace_document"):
@@ -943,8 +1116,20 @@ def run_file_management(client, persist_directory="kisski_db_v3", embedding_mode
                             st.session_state.docs_info[existing_docs[old_file]]["valid_to"] = st.session_state.new_docs[uploaded_file.name].get("valid_from") - 1
                             st.session_state.docs_info[existing_docs[old_file]]["date_edited"] = int(datetime.date.today().strftime("%Y%m%d"))
                             st.session_state.docs_info[existing_docs[old_file]]["edited_by"] = st.session_state.doc_list_editor
-                            
-                    save_doc_list(f"{persist_directory}/doc_list.json", st.session_state.docs_info)
+                            doc_list_updates.setdefault(existing_docs[old_file], {}).update({
+                                field: st.session_state.docs_info[existing_docs[old_file]][field]
+                                for field in ("valid_to", "date_edited", "edited_by")
+                            })
+
+                    # Merge only this upload's entries into the current file (under the lock), so
+                    # folder changes made meanwhile in the explorer or other sessions are kept.
+                    doc_list_path = os.path.join(persist_directory, DOC_LIST_FILENAME)
+                    with doc_list_lock(persist_directory):
+                        current_docs_info = load_doc_list(doc_list_path) if os.path.exists(doc_list_path) else {}
+                        for source, fields in doc_list_updates.items():
+                            current_docs_info[source] = {**current_docs_info.get(source, {}), **fields}
+                        save_doc_list(doc_list_path, current_docs_info)
+                    st.session_state.docs_info = current_docs_info
                     st.success(f"✅ {saved_count} Datei(en) erfolgreich gespeichert.")
                     
                     # Step 2: Add to vector store
